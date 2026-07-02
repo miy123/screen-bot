@@ -1,0 +1,112 @@
+"""
+小型 GUI 控制面板（tkinter，常駐最上層）
+"""
+
+import threading
+import tkinter as tk
+from tkinter import scrolledtext
+import keyboard
+import pyautogui
+
+import config
+from engine import BotEngine
+
+class BotGUI:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Screen Bot")
+        self.root.resizable(False, False)
+        self.root.attributes("-topmost", True)      # 永遠在最上層
+        self.root.attributes("-alpha", 0.92)         # 略微透明
+
+        self._engine = None
+        self._thread = None
+        self._build_ui()
+        self._setup_hotkeys()
+
+    # ── UI 建構 ──────────────────────────────────────────
+    def _build_ui(self):
+        PAD = dict(padx=8, pady=4)
+
+        # 標題列
+        title = tk.Label(self.root, text="Screen Bot", font=("Arial", 13, "bold"))
+        title.pack(**PAD)
+
+        # 狀態
+        self.status_var = tk.StringVar(value="閒置")
+        status_frame = tk.Frame(self.root)
+        status_frame.pack(fill="x", **PAD)
+        tk.Label(status_frame, text="狀態：").pack(side="left")
+        tk.Label(status_frame, textvariable=self.status_var,
+                 fg="#2196F3", font=("Arial", 10, "bold")).pack(side="left")
+
+        # 按鈕
+        btn_frame = tk.Frame(self.root)
+        btn_frame.pack(fill="x", **PAD)
+        self.start_btn = tk.Button(btn_frame, text=f"啟動 ({config.HOTKEY_START.upper()})",
+                                   bg="#4CAF50", fg="white", width=14,
+                                   command=self.start_bot)
+        self.start_btn.pack(side="left", padx=2)
+        self.stop_btn = tk.Button(btn_frame, text=f"停止 ({config.HOTKEY_STOP.upper()})",
+                                  bg="#F44336", fg="white", width=14,
+                                  command=self.stop_bot, state="disabled")
+        self.stop_btn.pack(side="left", padx=2)
+
+        # 日誌框
+        self.log_box = scrolledtext.ScrolledText(
+            self.root, width=40, height=10, state="disabled",
+            font=("Consolas", 9), bg="#1e1e1e", fg="#cccccc"
+        )
+        self.log_box.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        # 底部提示
+        tk.Label(self.root, text="滑鼠移到螢幕左上角可緊急停止",
+                 fg="gray", font=("Arial", 8)).pack(pady=(0, 4))
+
+    # ── 日誌 ─────────────────────────────────────────────
+    def log(self, msg):
+        def _do():
+            self.log_box.config(state="normal")
+            self.log_box.insert("end", msg + "\n")
+            self.log_box.see("end")
+            self.log_box.config(state="disabled")
+        self.root.after(0, _do)
+
+    # ── 狀態更新 ─────────────────────────────────────────
+    def set_state(self, state_str):
+        self.root.after(0, lambda: self.status_var.set(state_str))
+
+    # ── Bot 控制 ─────────────────────────────────────────
+    def start_bot(self):
+        if self._thread and self._thread.is_alive():
+            return
+
+        self.start_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+
+        self._engine = BotEngine(log_fn=self.log, state_fn=self.set_state)
+
+        self._thread = threading.Thread(target=self._engine.start, daemon=True)
+        self._thread.start()
+
+    def stop_bot(self):
+        if self._engine:
+            self._engine.stop()
+        self.start_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+
+    # ── 熱鍵 ─────────────────────────────────────────────
+    def _setup_hotkeys(self):
+        keyboard.add_hotkey(config.HOTKEY_START, lambda: self.root.after(0, self.start_bot))
+        keyboard.add_hotkey(config.HOTKEY_STOP,  lambda: self.root.after(0, self.stop_bot))
+
+    # ── 啟動 ─────────────────────────────────────────────
+    def run(self):
+        pyautogui.FAILSAFE = True
+        self.log(f"就緒。{config.HOTKEY_START.upper()} 啟動 / {config.HOTKEY_STOP.upper()} 停止")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.mainloop()
+
+    def _on_close(self):
+        self.stop_bot()
+        self.root.destroy()
