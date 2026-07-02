@@ -3,13 +3,16 @@ Small GUI control panel (tkinter, always on top)
 """
 
 import threading
+import time
 import tkinter as tk
 from tkinter import scrolledtext
 import keyboard
 import pyautogui
 
 import config
-from engine import BotEngine
+from engine import BotEngine, _resolve
+
+LOG_FILE = _resolve("bot_log.txt")
 
 class BotGUI:
     def __init__(self):
@@ -65,12 +68,20 @@ class BotGUI:
 
     # ── Logging ──────────────────────────────────────────
     def log(self, msg):
+        line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+
         def _do():
             self.log_box.config(state="normal")
-            self.log_box.insert("end", msg + "\n")
+            self.log_box.insert("end", line + "\n")
             self.log_box.see("end")
             self.log_box.config(state="disabled")
         self.root.after(0, _do)
+
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
 
     # ── State updates ──────────────────────────────────────
     def set_state(self, state_str):
