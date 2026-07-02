@@ -69,8 +69,10 @@ def save_polygon():
 
     template_path = f"images/captured_{saved_count}.png"
     mask_path     = f"images/captured_{saved_count}_mask.png"
-    cv2.imwrite(template_path, crop)
-    cv2.imwrite(mask_path, mask_crop)
+    ok1 = cv2.imwrite(template_path, crop)
+    ok2 = cv2.imwrite(mask_path, mask_crop)
+    if not ok1 or not ok2:
+      raise RuntimeError("cv2.imwrite 失敗，檢查權限或路徑")
     saved_count += 1
 
     print(f"已存 {template_path}（{w}x{h} px）+ 遮罩 {mask_path}")

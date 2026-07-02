@@ -18,31 +18,31 @@ HOTKEY_STOP  = "f2"
 #   "image": ["images/tree_big_1.png", "images/tree_big_2.png"],
 MATERIALS = [
     {
-        "image":            "images/tree_big.png",   # Big tree
+        "image":            ["images/tree_big_1.png", "images/tree_big_2.png", "images/tree_big_3.png"],   # Big tree
         "collect_key":      "2",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_stone.png",  # Stone ore
+        "image":            ["images/ore_stone_1.png"],  # Stone ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_copper.png", # Copper ore
+        "image":            ["images/ore_stone_1.png"], # Copper ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_silver.png", # Silver ore
+        "image":            ["images/ore_stone_1.png"], # Silver ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_gold.png",   # Gold ore
+        "image":            ["images/ore_stone_1.png"],   # Gold ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
@@ -73,7 +73,7 @@ REACH_RADIUS = 100
 
 # ── Collect verification ────────────────────────────────────
 COLLECT_VERIFY_DELAY = 0.8   # Seconds to wait after pressing the collect key before checking if the material vanished
-COLLECT_RETRY_MAX    = 2     # Max retries if collecting fails
+COLLECT_RETRY_MAX    = 2     # Max re tries if collecting fails
 
 # ── Realign after a failed collect ──────────────────────────
 # The movement keys double as facing direction, so realigning first taps the

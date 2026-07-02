@@ -26,7 +26,7 @@ class BotGUI:
         self._thread = None
         self._build_ui()
         self._setup_hotkeys()
-
+        
     # ── Build UI ─────────────────────────────────────────
     def _build_ui(self):
         PAD = dict(padx=8, pady=4)
@@ -101,6 +101,11 @@ class BotGUI:
         self._thread.start()
 
     def stop_bot(self):
+        print("移動滑鼠到目標位置，3秒後讀取")
+        time.sleep(3)
+        
+        print(pyautogui.position())
+        
         if self._engine:
             self._engine.stop()
         self.start_btn.config(state="normal")
