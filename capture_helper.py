@@ -1,17 +1,17 @@
 """
-截圖輔助工具 - 多邊形選取，自動去背
+Screenshot capture helper - polygon selection, automatic background removal
 
-操作：
-  左鍵點擊   = 加一個頂點
-  右鍵 / Enter = 完成選取，存檔
-  Backspace  = 刪除最後一個頂點
-  R          = 重新開始（清除所有頂點）
-  S          = 強制存矩形（舊模式）
-  Q          = 離開
+Controls:
+  Left click     = add a vertex
+  Right click / Enter = finish selection, save
+  Backspace      = remove the last vertex
+  R              = restart (clear all vertices)
+  S              = force-save as a rectangle (legacy mode)
+  Q              = quit
 
-存出兩個檔：
-  images/captured_N.png       模板圖片
-  images/captured_N_mask.png  遮罩（白=辨識區域，黑=忽略背景）
+Saves two files:
+  images/captured_N.png       template image
+  images/captured_N_mask.png  mask (white = recognized area, black = ignored background)
 """
 
 import os
@@ -37,7 +37,7 @@ def redraw():
         for i in range(len(points) - 1):
             cv2.line(display, points[i], points[i+1], (0, 255, 0), 2)
         if len(points) >= 3:
-            cv2.line(display, points[-1], points[0], (0, 200, 0), 1)  # 虛線預覽封閉
+            cv2.line(display, points[-1], points[0], (0, 200, 0), 1)  # dashed preview of the closing edge
 
     for i, p in enumerate(points):
         cv2.circle(display, p, 5, (0, 255, 255), -1)
@@ -59,13 +59,13 @@ def save_polygon():
     pts = np.array(points, dtype=np.int32)
     x, y, w, h = cv2.boundingRect(pts)
 
-    # 裁切出模板（bounding box）
+    # Crop out the template (bounding box)
     crop = orig[y:y+h, x:x+w]
 
-    # 製作遮罩（多邊形內白色，外黑色）
+    # Build the mask (white inside the polygon, black outside)
     mask_full = np.zeros(orig.shape[:2], dtype=np.uint8)
-    cv2.fillPoly(mask_full, [pts], 255)   # 用原始螢幕座標填充
-    mask_crop = mask_full[y:y+h, x:x+w]  # 再裁切出 bounding box
+    cv2.fillPoly(mask_full, [pts], 255)   # Fill using original screen coordinates
+    mask_crop = mask_full[y:y+h, x:x+w]  # Crop to the bounding box too
 
     template_path = f"images/captured_{saved_count}.png"
     mask_path     = f"images/captured_{saved_count}_mask.png"
@@ -76,7 +76,7 @@ def save_polygon():
     print(f"已存 {template_path}（{w}x{h} px）+ 遮罩 {mask_path}")
     print(f"→ 在 config.py MATERIAL_IMAGES 加入 \"{template_path}\"")
 
-    # 視覺回饋
+    # Visual feedback
     feedback = display.copy()
     cv2.polylines(feedback, [pts], True, (0, 255, 0), 3)
     cv2.putText(feedback, "已存！", (x, y - 10),
@@ -89,7 +89,7 @@ def save_polygon():
 
 
 def save_rect():
-    """舊模式：直接存整個 bounding box（無遮罩）"""
+    """Legacy mode: save the whole bounding box directly (no mask)"""
     global saved_count, points
     if len(points) < 2:
         return

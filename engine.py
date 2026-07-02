@@ -1,5 +1,5 @@
 """
-核心自動化邏輯：掃描 → 移動 → 採集（含驗證重試）
+Core automation logic: scan → move → collect (with verify & retry)
 """
 
 import os
@@ -13,7 +13,7 @@ from PIL import ImageGrab
 
 import config
 
-# ── 路徑解析（exe 打包後仍正確找到圖片） ─────────────────
+# ── Path resolution (still finds images correctly after exe packaging) ──
 def _resolve(path):
     if getattr(sys, "frozen", False):
         base = os.path.dirname(sys.executable)
@@ -21,7 +21,7 @@ def _resolve(path):
         base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, path)
 
-# ── 螢幕擷取 ──────────────────────────────────────────────
+# ── Screen capture ────────────────────────────────────────
 def capture_screen():
     shot = ImageGrab.grab(bbox=config.SCAN_REGION)
     return cv2.cvtColor(np.array(shot), cv2.COLOR_RGB2BGR)
@@ -33,9 +33,10 @@ def screen_center():
     w, h = pyautogui.size()
     return (w // 2, h // 2)
 
-# ── 圖像辨識 ──────────────────────────────────────────────
-# config 裡的 "image" 欄位可以是單一路徑字串，也可以是路徑清單 —— 放清單時代表
-# 「同一個東西的多張模板」（例如動畫的不同幀、不同光影），比對時任一張命中就算數。
+# ── Image recognition ───────────────────────────────────────
+# The "image" field in config can be a single path string or a list of paths
+# — a list means "multiple templates for the same thing" (e.g. different
+# animation frames, different lighting); a match against any one counts as a hit.
 _template_cache = {}
 
 def _image_paths(image_field):
@@ -45,11 +46,11 @@ def _image_paths(image_field):
 
 def _load_template_and_mask(img_path):
     """
-    載入模板，遮罩優先順序：
-    1. alpha 通道（去背素材）
-    2. 同名 _mask.png（多邊形截圖）
-    3. 無遮罩
-    載入結果會快取，同一次執行不會重複讀檔。
+    Load a template. Mask priority order:
+    1. Alpha channel (background-removed material)
+    2. Matching _mask.png (polygon capture)
+    3. No mask
+    Results are cached, so a file is never read twice in the same run.
     """
     full_path = _resolve(img_path)
     if full_path in _template_cache:
@@ -101,7 +102,7 @@ def _nms(matches, min_dist):
     return kept
 
 def _find_matches_multi(screen_bgr, image_field):
-    """對 image 欄位（單張或多張模板）逐一比對，回傳 NMS 合併後的 (pos, conf) 清單。"""
+    """Match against every template in the image field (single or list), returning the NMS-merged (pos, conf) list."""
     all_matches = []
     min_side = None
     for img_path in _image_paths(image_field):
@@ -118,9 +119,9 @@ def _find_matches_multi(screen_bgr, image_field):
 
 def find_nearest_material(screen_bgr):
     """
-    掃描所有素材，回傳距螢幕中心最近的 (pos, material_dict)。
-    material_dict 包含 image/collect_key/collect_times/collect_interval。
-    暫時放棄（quarantine）中的位置不會被選為目標。
+    Scan for all materials, return the (pos, material_dict) closest to screen center.
+    material_dict contains image/collect_key/collect_times/collect_interval.
+    Positions currently under quarantine are never selected as a target.
     """
     all_candidates = []
     for mat in config.MATERIALS:
@@ -137,29 +138,32 @@ def find_nearest_material(screen_bgr):
     return nearest[0], nearest[2]   # (pos, material_dict)
 
 def material_visible(screen_bgr, mat):
-    """確認特定素材是否仍在畫面上。"""
+    """Check whether a specific material is still on screen."""
     return len(_find_matches_multi(screen_bgr, mat["image"])) > 0
 
-# ── 距離工具 ──────────────────────────────────────────────
+# ── Distance helper ──────────────────────────────────────────
 def distance(pos_a, pos_b):
     return ((pos_a[0] - pos_b[0]) ** 2 + (pos_a[1] - pos_b[1]) ** 2) ** 0.5
 
-# ── 同一位置持續採集失敗判定 ────────────────────────────────
-# _stuck_tracker 記錄「目前卡著的那顆素材位置」跟連續失敗次數；
-# 位置差在 SAME_MATERIAL_TOLERANCE 內都視為同一顆，換了位置就重新計次。
+# ── Persistent collect failure at the same spot ─────────────
+# _stuck_tracker records "the position of the material we're currently stuck
+# on" and its consecutive failure count; positions within
+# SAME_MATERIAL_TOLERANCE are treated as the same material, a different
+# position resets the count.
 _stuck_tracker = {"pos": None, "count": 0}
-# _quarantine 記錄「暫時放棄」的位置跟解除時間，過期前 find_nearest_material 不會選它
+# _quarantine records a "temporarily given up" position and when it expires;
+# find_nearest_material won't pick it until then.
 _quarantine = {"pos": None, "until": 0.0}
 
 def _stuck_count_for(mat_pos):
-    """回傳這個位置目前累積的連續失敗次數（不同位置視為 0）。"""
+    """Return the current consecutive failure count for this position (0 for a different position)."""
     prev = _stuck_tracker["pos"]
     if prev is not None and distance(mat_pos, prev) <= config.SAME_MATERIAL_TOLERANCE:
         return _stuck_tracker["count"]
     return 0
 
 def _record_attempt(mat_pos, success):
-    """紀錄這次完整採集（含重試）的結果，回傳更新後的累積失敗次數。"""
+    """Record the outcome of this full collect attempt (including retries); returns the updated failure count."""
     if success:
         _stuck_tracker["pos"] = None
         _stuck_tracker["count"] = 0
@@ -183,16 +187,21 @@ def _is_quarantined(mat_pos):
         return False
     return distance(mat_pos, _quarantine["pos"]) <= config.SAME_MATERIAL_TOLERANCE
 
-# ── 移動 ──────────────────────────────────────────────────
-# 這款遊戲移動方向鍵同時就是角色面向（沒有獨立轉向鍵），所以：
-# - 目前面向：預設用「最後按下的方向鍵」估計，不需要截圖；
-#   若設定了 CHARACTER_CROP + FACING_IMAGES，會改用截圖比對（更準，能抓到
-#   「按了方向鍵但被地形卡住、其實沒轉向」的情況），沒設定就自動退回估計值。
-# - 目前位置：沒有座標可讀，用「往某方向按鍵的秒數」累加當作相對於出生點（中心）的位移，
-#   回中心待機時再用相反方向、等長時間按回去（近似值，非絕對精準）
+# ── Movement ──────────────────────────────────────────────
+# In this game the movement keys double as the character's facing direction
+# (there's no separate turn key), so:
+# - Current facing: estimated by default from "the last direction key
+#   pressed", no screenshot needed. If CHARACTER_CROP + FACING_IMAGES are
+#   set, screenshot comparison is used instead (more accurate, catches the
+#   case of "pressed a direction key but terrain blocked it, so it didn't
+#   actually turn"); falls back to the estimate automatically when unset.
+# - Current position: there's no readable coordinate, so "seconds spent
+#   holding a direction key" is accumulated as a relative offset from the
+#   spawn point (home); returning home holds the opposite direction for the
+#   same duration (an approximation, not exact).
 
-_position = {"x": 0.0, "y": 0.0}   # 相對中心的估計位移（單位：按鍵秒數）
-_facing = {"dir": None}            # 按鍵估計的面向："up"/"down"/"left"/"right"
+_position = {"x": 0.0, "y": 0.0}   # Estimated offset from home (unit: key-hold seconds)
+_facing = {"dir": None}            # Key-estimated facing: "up"/"down"/"left"/"right"
 
 def reset_position():
     _position["x"] = 0.0
@@ -200,10 +209,12 @@ def reset_position():
 
 def detect_facing(screen_bgr):
     """
-    用截圖比對偵測角色目前面向。需設定 CHARACTER_CROP 和 FACING_IMAGES，
-    兩者缺一則回傳 None（呼叫端會自動退回用按鍵估計的面向）。
-    每個方向可以放單張圖或一個清單（例如同一面向的待機/走路動畫多幀），
-    清單內任一張比對分數最高就採用。
+    Detect the character's current facing via screenshot comparison.
+    Requires CHARACTER_CROP and FACING_IMAGES; missing either returns None
+    (callers automatically fall back to the key-estimated facing).
+    Each direction can be a single image or a list (e.g. multiple frames of
+    an idle/walk animation for that facing) — the highest-scoring match in
+    the list wins.
     """
     if not config.CHARACTER_CROP or not config.FACING_IMAGES:
         return None
@@ -232,9 +243,10 @@ def detect_facing(screen_bgr):
 
 def current_facing(force_detect=False):
     """
-    平常回傳按鍵估計的面向（便宜、不用截圖）。
-    force_detect=True 且設定了 CHARACTER_CROP/FACING_IMAGES 時，才改用截圖比對
-    （用在同一顆素材已經連續失敗好幾次，懷疑估計值不準的時候）。
+    Normally returns the key-estimated facing (cheap, no screenshot).
+    When force_detect=True and CHARACTER_CROP/FACING_IMAGES are set, uses
+    screenshot comparison instead (used once the same material has failed
+    several times in a row and the estimate is suspected to be wrong).
     """
     if force_detect and config.CHARACTER_CROP and config.FACING_IMAGES:
         detected = detect_facing(capture_screen())
@@ -262,7 +274,7 @@ def _track_move(direction, duration):
         _position["y"] -= duration
 
 def _hold_key(key, duration):
-    """按住方向鍵 duration 秒，同時更新面向與估計位置。"""
+    """Hold a direction key for `duration` seconds, updating facing and the estimated position."""
     pyautogui.keyDown(key)
     time.sleep(duration)
     pyautogui.keyUp(key)
@@ -295,7 +307,7 @@ def _try_unstuck(stop_fn, log_fn):
     return not stop_fn()
 
 def approach_material(stop_fn, log_fn=print):
-    """持續移動靠近最近素材，含卡住偵測。"""
+    """Keep moving toward the nearest material, with stuck detection."""
     held_keys = set()
     last_mat_pos = None
     last_moved_at = time.time()
@@ -348,7 +360,7 @@ def approach_material(stop_fn, log_fn=print):
         _release_all_move_keys()
 
 def _material_desired_direction(mat_pos):
-    """根據素材位置，回傳角色該面向哪個方向鍵（"up"/"down"/"left"/"right"）。"""
+    """Given a material's position, return the direction key the character should face ("up"/"down"/"left"/"right")."""
     cx, cy = screen_center()
     dx = mat_pos[0] - cx
     dy = mat_pos[1] - cy
@@ -356,8 +368,9 @@ def _material_desired_direction(mat_pos):
         return "right" if dx > 0 else "left"
     return "down" if dy > 0 else "up"
 
-# ── 採集失敗重對準 ─────────────────────────────────────────
-# 這款遊戲用移動鍵當轉向，所以「轉向」就是輕點一下該方向鍵。
+# ── Realign after a failed collect ──────────────────────────
+# In this game the movement keys double as turning, so "turning" is just a
+# quick tap of the relevant direction key.
 def _tactic_face_material(mat_pos, stop_fn, log_fn):
     desired = _material_desired_direction(mat_pos)
     log_fn(f"重對準：轉向面對素材（{desired}）")
@@ -373,7 +386,7 @@ def _tactic_strafe(cross_keys, stop_fn, log_fn):
         time.sleep(0.1)
 
 def _tactic_advance_retreat(mat_pos, stop_fn, log_fn):
-    """前進一小步再退回，甩開卡在素材判定範圍邊緣/內部的情形。"""
+    """Step forward then back, to shake free of being stuck at the edge/inside the material's hit detection."""
     log_fn("重對準：前進後退（甩脫卡位）")
     toward_dir = _material_desired_direction(mat_pos)
     back_dir = {"up": "down", "down": "up", "left": "right", "right": "left"}[toward_dir]
@@ -387,11 +400,14 @@ def _tactic_advance_retreat(mat_pos, stop_fn, log_fn):
 
 def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
     """
-    採集失敗後重對準素材：
-    1. 先退後，避免卡在素材判定範圍內
-    2. 算出目前面向是否對著素材：force_detect=False 用按鍵估計（便宜），
-       force_detect=True 時（同一顆已連續失敗多次）優先用截圖判定 → 不對就補按方向鍵轉正
-    3. 若已經面向正確但還是採不到 → 依重試次數輪流嘗試側移／前進後退甩開卡位
+    Realign toward the material after a failed collect:
+    1. Back off first, to avoid being stuck inside the material's hit area
+    2. Determine whether the current facing is toward the material:
+       force_detect=False uses the (cheap) key estimate; force_detect=True
+       (same spot has failed several times in a row) prefers screenshot
+       detection instead — if not facing it, tap the direction key to correct it
+    3. If already facing correctly but still can't collect → cycle through
+       strafing / advance-retreat by retry count to shake free of a stuck position
     """
     if stop_fn():
         return
@@ -427,7 +443,7 @@ def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
     tactics[attempt % len(tactics)]()
 
 def go_home(stop_fn, log_fn):
-    """走回啟動時的位置（中心點）待機，用累積移動秒數估算的相對位置換算回程。"""
+    """Walk back to the position where the bot started (home) to idle, using the accumulated key-seconds estimate to compute the return path."""
     if abs(_position["x"]) < 0.05 and abs(_position["y"]) < 0.05:
         return
     log_fn("回中心待機")
@@ -446,16 +462,19 @@ def search_wander(stop_fn, log_fn=print):
             break
         _hold_key(config.MOVE_KEYS[d], step)
 
-# ── 採集（含方向驗證重試） ────────────────────────────────
+# ── Collect (with facing verification and retry) ────────────
 def collect_with_verify(mat, stop_fn, log_fn=print):
     """
-    按採集鍵 → 等待 → 掃描是否消失。
-    若素材仍在：重對準（退後+轉向/側移/前進後退）→ 重新靠近 → 再試。
-    最多重試 COLLECT_RETRY_MAX 次。
+    Press the collect key → wait → scan for whether the material vanished.
+    If it's still there: realign (back off + turn/strafe/advance-retreat) →
+    approach again → retry. Retries at most COLLECT_RETRY_MAX times.
 
-    「同一位置」的持續失敗會跨輪累計（見 _stuck_tracker）：
-    - 累積達 STUCK_FAIL_THRESHOLD 次 → 重對準改用截圖判定面向（若有設定）
-    - 累積達 STUCK_GIVE_UP_THRESHOLD 次 → 暫時放棄這個位置一段時間，改找別的素材
+    Persistent failure at the "same spot" accumulates across rounds (see
+    _stuck_tracker):
+    - Reaching STUCK_FAIL_THRESHOLD → realign switches to screenshot-based
+      facing detection (if configured)
+    - Reaching STUCK_GIVE_UP_THRESHOLD → temporarily give up on this spot and
+      look for another material instead
     """
     key   = mat["collect_key"]
     times = mat["collect_times"]
@@ -490,7 +509,7 @@ def collect_with_verify(mat, stop_fn, log_fn=print):
             return True
 
         if attempt < config.COLLECT_RETRY_MAX:
-            # 取得目前素材位置，傳給重對準函數
+            # Re-scan the material's current position to pass to the realign function
             mat_pos, _ = find_nearest_material(screen)
             if mat_pos is None:
                 log_fn("素材已消失（重掃確認）")
@@ -511,7 +530,7 @@ def collect_with_verify(mat, stop_fn, log_fn=print):
 
     return not stop_fn()
 
-# ── 主狀態機 ──────────────────────────────────────────────
+# ── Main state machine ───────────────────────────────────────
 class BotEngine:
     IDLE        = "閒置"
     SEARCHING   = "尋找素材中"

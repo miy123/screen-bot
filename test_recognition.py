@@ -1,14 +1,14 @@
 """
-測試圖像辨識效果（支援多邊形遮罩）。
+Test image recognition results (supports polygon masks).
 
-用法：
-  python test_recognition.py screenshot.png images/material_1.png [門檻]
+Usage:
+  python test_recognition.py screenshot.png images/material_1.png [threshold]
 
-視窗內操作：
-  +  門檻 +0.05 重跑
-  -  門檻 -0.05 重跑
-  R  用目前門檻重跑
-  Q  離開
+In-window controls:
+  +  threshold +0.05, rerun
+  -  threshold -0.05, rerun
+  R  rerun with the current threshold
+  Q  quit
 """
 
 import sys
@@ -63,17 +63,17 @@ def run_test(screen, template, mask, threshold):
             cv2.putText(display, label, (x1, max(y1-6, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
-    # 角色位置（螢幕中心）
+    # Character position (screen center)
     cv2.drawMarker(display, (cx_screen, cy_screen),
                    (255, 255, 255), cv2.MARKER_DIAMOND, 24, 2)
 
-    # 提示列
+    # Status bar
     bar = f"門檻:{threshold:.2f}  找到:{len(matches)}個  +/-調整  R重跑  Q離開"
     cv2.rectangle(display, (0, sh-30), (sw, sh), (30, 30, 30), -1)
     cv2.putText(display, bar, (8, sh-8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
-    # 熱圖
+    # Heatmap
     heatmap = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
     heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
     heatmap_resized = cv2.resize(heatmap_color, (sw, sh))
@@ -98,7 +98,7 @@ def main(screen_path, template_path, threshold):
         print(f"[錯誤] 找不到模板：{template_path}")
         return
 
-    # 遮罩優先順序：alpha 通道 > _mask.png > 無遮罩
+    # Mask priority order: alpha channel > _mask.png > no mask
     raw = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
     template = cv2.imread(template_path)
     mask = None
@@ -142,7 +142,7 @@ def main(screen_path, template_path, threshold):
         elif key == ord('-'):
             threshold = max(threshold - 0.05, 0.10)
         elif key == ord('r'):
-            pass  # 直接重跑
+            pass  # Just rerun as-is
 
     cv2.destroyAllWindows()
 

@@ -1,6 +1,6 @@
 """
-Screen Bot 入口
-執行：python bot.py
+Screen Bot entry point
+Run: python bot.py
 """
 
 from gui import BotGUI

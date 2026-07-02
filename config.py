@@ -1,58 +1,63 @@
-# ── 所有可調整設定 ─────────────────────────────────────────
+# ── All adjustable settings ────────────────────────────────
 
-# 熱鍵
+# Hotkeys
 HOTKEY_START = "f1"
 HOTKEY_STOP  = "f2"
 
-# ── 素材設定（每種素材獨立設定） ──────────────────────────
-# 樹只設「大樹」（小樹/中樹不採），礦石四種共用同一顆採集鍵。
-# image 路徑請用 capture_helper.py 截圖後，把存出的 captured_N.png（+ _mask.png）
-# 改名成對應檔名放進 images/ 資料夾。
+# ── Material settings (each material configured independently) ──
+# Only "big tree" is collected (small/medium trees are skipped); the four ore
+# types share the same collect key.
+# For image paths, use capture_helper.py to capture a screenshot, then rename
+# the resulting captured_N.png (+ _mask.png) to match the filenames below and
+# drop them into the images/ folder.
 #
-# image 也可以放一個清單，代表「同一顆素材的多張模板」，例如素材有搖晃動畫、
-# 或不同光影下外觀不太一樣，就多截幾張都放進去，比對時任一張命中就算數：
+# "image" can also be a list, meaning "multiple templates for the same thing"
+# — e.g. if a material has a sway animation or looks different under
+# different lighting, capture a few more screenshots and list them all; a
+# match against any one of them counts as a hit:
 #   "image": ["images/tree_big_1.png", "images/tree_big_2.png"],
 MATERIALS = [
     {
-        "image":            "images/tree_big.png",   # 大樹
+        "image":            "images/tree_big.png",   # Big tree
         "collect_key":      "2",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_stone.png",  # 石礦
+        "image":            "images/ore_stone.png",  # Stone ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_copper.png", # 銅礦
+        "image":            "images/ore_copper.png", # Copper ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_silver.png", # 銀礦
+        "image":            "images/ore_silver.png", # Silver ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
-        "image":            "images/ore_gold.png",   # 金礦
+        "image":            "images/ore_gold.png",   # Gold ore
         "collect_key":      "3",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
 ]
 
-# 圖像辨識信心門檻 0.0~1.0
+# Image match confidence threshold, 0.0~1.0
 MATCH_THRESHOLD = 0.75
 
-# 掃描範圍：None = 全螢幕，或 (left, top, right, bottom)
+# Scan region: None = full screen, or (left, top, right, bottom)
 SCAN_REGION = None
 
-# ── 移動設定 ──────────────────────────────────────────────
-# 這款遊戲用方向鍵移動，且移動方向 = 角色面向（沒有獨立的轉向鍵）
+# ── Movement settings ───────────────────────────────────────
+# This game moves with arrow keys, and the movement direction is also the
+# character's facing direction (there's no separate turn key).
 MOVE_KEYS = {
     "up":    "up",
     "down":  "down",
@@ -60,31 +65,38 @@ MOVE_KEYS = {
     "right": "right",
 }
 
-# 邊走邊掃描頻率（秒），建議 0.05~0.15
+# Scan frequency while moving (seconds), 0.05~0.15 recommended
 SCAN_WHILE_MOVING = 0.08
 
-# 距離螢幕中心幾 px 內視為「已到達」
+# Within this many px of screen center counts as "arrived"
 REACH_RADIUS = 100
 
-# ── 採集驗證 ──────────────────────────────────────────────
-COLLECT_VERIFY_DELAY = 0.8   # 按完採集鍵後等幾秒確認素材消失
-COLLECT_RETRY_MAX    = 2     # 採集失敗最多重試幾次
+# ── Collect verification ────────────────────────────────────
+COLLECT_VERIFY_DELAY = 0.8   # Seconds to wait after pressing the collect key before checking if the material vanished
+COLLECT_RETRY_MAX    = 2     # Max retries if collecting fails
 
-# ── 採集失敗重對準 ─────────────────────────────────────────
-# 移動方向鍵同時就是角色面向，重對準時會先補按「該面向素材的方向鍵」轉正，
-# 若已經面向正確但還是採不到，才輪流嘗試側移／前進後退甩開卡位。
-REALIGN_BACK_DURATION   = 0.4    # 退後時長（秒）
-REALIGN_STRAFE_DURATION = 0.25   # 側移／轉向時長（秒）
+# ── Realign after a failed collect ──────────────────────────
+# The movement keys double as facing direction, so realigning first taps the
+# direction key that faces the material; if already facing correctly but
+# still can't collect, it cycles through strafing / advance-retreat to shake
+# free of a stuck position.
+REALIGN_BACK_DURATION   = 0.4    # Back-off duration (seconds)
+REALIGN_STRAFE_DURATION = 0.25   # Strafe/turn duration (seconds)
 
-# ── 角色面向偵測（進階、選用） ────────────────────────────
-# 平常面向是用「最後按的方向鍵」去估計，通常夠用。
-# 但如果角色被地形卡住、按了方向鍵卻沒轉向/沒移動，估計值就會跟實際不符。
-# 想要更準的話，用 capture_helper.py 分別截「角色朝上/下/左/右」時的定格畫面，
-# 存成下面四個檔名，並填好 CHARACTER_CROP（角色在螢幕上的範圍），
-# 兩者都設定好才會啟用截圖比對，沒設定就自動維持用按鍵估計。
-# 跟 MATERIALS 一樣，每個方向也可以放清單（例如站立/走路動畫多幀）：
+# ── Character facing detection (advanced, optional) ─────────
+# Normally facing is estimated from "the last direction key pressed", which
+# is usually good enough. But if the character gets blocked by terrain and a
+# direction key press doesn't actually turn/move it, the estimate can drift
+# from reality.
+# For more accuracy, use capture_helper.py to capture freeze-frames of the
+# character facing up/down/left/right, save them under the filenames below,
+# and fill in CHARACTER_CROP (the character's area on screen). Both must be
+# set to enable screenshot-based comparison; otherwise it keeps using the
+# key-press estimate.
+# Just like MATERIALS, each direction can also be a list (e.g. multiple
+# frames of an idle/walk animation):
 #   "up": ["images/facing_up_1.png", "images/facing_up_2.png"],
-CHARACTER_CROP = None     # 例如 (860, 440, 1060, 640)
+CHARACTER_CROP = None     # e.g. (860, 440, 1060, 640)
 FACING_IMAGES = {
     # "up":    "images/facing_up.png",
     # "down":  "images/facing_down.png",
@@ -92,36 +104,40 @@ FACING_IMAGES = {
     # "right": "images/facing_right.png",
 }
 
-# ── 同一位置持續採集失敗 ──────────────────────────────────
-# 平常都用「按鍵估計面向」重對準，比較省效能；
-# 只有同一顆素材（位置在誤差內）連續失敗達 STUCK_FAIL_THRESHOLD 次，
-# 才改用截圖判定面向（若有設定 CHARACTER_CROP/FACING_IMAGES，兩套算是並存，
-# 平常用估計、卡住才切換去查截圖）。
-# 如果連截圖判定都救不回來、失敗次數達 STUCK_GIVE_UP_THRESHOLD，就暫時放棄
-# 這個位置，STUCK_QUARANTINE_SECONDS 秒內不再把它當成目標，改找別的素材。
-SAME_MATERIAL_TOLERANCE  = 40    # 幾 px 內視為同一顆素材
-STUCK_FAIL_THRESHOLD     = 2     # 同一顆累積失敗幾次後，優先改用截圖判定面向
-STUCK_GIVE_UP_THRESHOLD  = 4     # 累積失敗達幾次後，暫時放棄這顆
-STUCK_QUARANTINE_SECONDS = 120   # 放棄後，這個位置多久內不會再被選為目標（秒）
+# ── Persistent collect failure at the same spot ─────────────
+# Normally realigning uses the cheap key-press facing estimate. Only once the
+# same material (position within tolerance) has failed
+# STUCK_FAIL_THRESHOLD times in a row does it switch to screenshot-based
+# facing detection (if CHARACTER_CROP/FACING_IMAGES are set — the two
+# approaches coexist: estimate by default, screenshot once stuck).
+# If even screenshot detection can't save it and failures reach
+# STUCK_GIVE_UP_THRESHOLD, that spot is temporarily abandoned — it won't be
+# picked as a target again for STUCK_QUARANTINE_SECONDS, and the bot looks
+# for another material instead.
+SAME_MATERIAL_TOLERANCE  = 40    # Within this many px counts as the same material
+STUCK_FAIL_THRESHOLD     = 2     # After this many consecutive failures at the same spot, prefer screenshot-based facing detection
+STUCK_GIVE_UP_THRESHOLD  = 4     # After this many consecutive failures, temporarily give up on this spot
+STUCK_QUARANTINE_SECONDS = 120   # How long (seconds) a given-up spot stays excluded from targeting
 
-# ── 卡住偵測 ──────────────────────────────────────────────
-STUCK_TIMEOUT           = 3.0   # 幾秒沒動視為卡住
-STUCK_MOVEMENT_THRESHOLD = 5    # 幾 px 以下算沒動
-STUCK_ESCAPE_DURATION   = 0.4   # 脫困每個方向走多久（秒）
-STUCK_MAX_ATTEMPTS      = 3     # 最多脫困幾次
+# ── Stuck detection ──────────────────────────────────────────
+STUCK_TIMEOUT           = 3.0   # Seconds without movement before considered stuck
+STUCK_MOVEMENT_THRESHOLD = 5    # Movement below this many px counts as "not moved"
+STUCK_ESCAPE_DURATION   = 0.4   # How long to move in each escape direction (seconds)
+STUCK_MAX_ATTEMPTS      = 3     # Max number of escape attempts
 
 JUMP_KEY = "space"
 
-# ── 循環設定 ──────────────────────────────────────────────
-SCAN_INTERVAL   = 1.0    # 每輪掃描間隔（秒）
-RESPAWN_WAIT    = 30     # 採集完後等待刷新（秒）
+# ── Loop settings ────────────────────────────────────────────
+SCAN_INTERVAL   = 1.0    # Interval between scans (seconds)
+RESPAWN_WAIT    = 30     # Wait time after collecting, for respawn (seconds)
 
-# ── 找不到素材時的待機 ────────────────────────────────────
-# True：回到啟動時的位置（視為中心點）待機，每隔 IDLE_SCAN_INTERVAL 秒才重新掃描一次
-# False：用舊的 SEARCH_PATTERN 到處遊走找素材
+# ── Idling when no material is found ────────────────────────
+# True: return to the position where the bot started (treated as "home") and
+#       idle there, only re-scanning every IDLE_SCAN_INTERVAL seconds
+# False: use the old SEARCH_PATTERN to wander around looking for materials
 RETURN_HOME_WHEN_IDLE = True
-IDLE_SCAN_INTERVAL    = 20   # 待機時多久掃描一次素材是否刷新（秒）
+IDLE_SCAN_INTERVAL    = 20   # How often to scan for a respawned material while idling (seconds)
 
-# 找不到素材且 RETURN_HOME_WHEN_IDLE = False 時使用
-SEARCH_DURATION = 3.0    # 找不到素材時遊走時長（秒）
+# Used when no material is found and RETURN_HOME_WHEN_IDLE = False
+SEARCH_DURATION = 3.0    # How long to wander when no material is found (seconds)
 SEARCH_PATTERN  = ["up", "right", "down", "left"]
