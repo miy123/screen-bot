@@ -32,6 +32,10 @@ os.makedirs("images", exist_ok=True)
 
 # What you can capture. Keep this in sync with the material/facing names used
 # in config.py's MATERIALS / FACING_IMAGES.
+#
+# "home_landmark" is special: capture it while standing exactly where you
+# want the bot to idle. The tool computes and prints how far its center is
+# from the middle of the screen — paste that into config.HOME_LANDMARK_OFFSET.
 CATEGORIES = [
     "tree_big",
     "ore_stone",
@@ -42,6 +46,7 @@ CATEGORIES = [
     "facing_down",
     "facing_left",
     "facing_right",
+    "home_landmark",
 ]
 
 WINDOW_ID = "screen-bot-capture"
@@ -136,6 +141,14 @@ def save_polygon():
       raise RuntimeError("cv2.imwrite 失敗，檢查權限或路徑")
 
     print(f"已存 {template_path}（{w}x{h} px）+ 遮罩 {mask_path}")
+
+    if current_name == "home_landmark":
+        sh, sw = orig.shape[:2]
+        dx, dy = (x + w // 2) - sw // 2, (y + h // 2) - sh // 2
+        print(f"→ 這是中心點地標，相對畫面中心偏移 dx={dx}, dy={dy}")
+        print(f"   把這行貼進 config.py： HOME_LANDMARK_OFFSET = ({dx}, {dy})")
+        print(f'   並設定 HOME_LANDMARK_IMAGE = "{template_path}"（多張的話存成清單）')
+
     next_index += 1
     print(f"下一張會存成 {current_name}_{next_index}.png（按 M 可換素材，按 G 可重新截圖）")
 

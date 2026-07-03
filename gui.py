@@ -54,6 +54,10 @@ class BotGUI:
                                   bg="#F44336", fg="white", width=14,
                                   command=self.stop_bot, state="disabled")
         self.stop_btn.pack(side="left", padx=2)
+        self.debug_btn = tk.Button(btn_frame, text=f"Debug 座標 ({config.HOTKEY_DEBUG.upper()})",
+                                   bg="#9C27B0", fg="white",
+                                   command=self.debug_position)
+        self.debug_btn.pack(side="left", padx=2)
 
         # Log box
         self.log_box = scrolledtext.ScrolledText(
@@ -106,15 +110,30 @@ class BotGUI:
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
 
+    # ── Debug: read a screen coordinate under the mouse ────
+    def debug_position(self):
+        if getattr(self, "_debug_running", False):
+            return
+        self._debug_running = True
+        self.log(f"Debug：{config.DEBUG_POSITION_DELAY} 秒後讀取滑鼠座標，請把滑鼠移到目標按鈕上")
+        threading.Thread(target=self._debug_position_worker, daemon=True).start()
+
+    def _debug_position_worker(self):
+        time.sleep(config.DEBUG_POSITION_DELAY)
+        pos = pyautogui.position()
+        self.log(f"Debug：滑鼠座標 = {pos}")
+        self._debug_running = False
+
     # ── Hotkeys ──────────────────────────────────────────
     def _setup_hotkeys(self):
         keyboard.add_hotkey(config.HOTKEY_START, lambda: self.root.after(0, self.start_bot))
         keyboard.add_hotkey(config.HOTKEY_STOP,  lambda: self.root.after(0, self.stop_bot))
+        keyboard.add_hotkey(config.HOTKEY_DEBUG, lambda: self.root.after(0, self.debug_position))
 
     # ── Run ──────────────────────────────────────────────
     def run(self):
         pyautogui.FAILSAFE = True
-        self.log(f"就緒。{config.HOTKEY_START.upper()} 啟動 / {config.HOTKEY_STOP.upper()} 停止")
+        self.log(f"就緒。{config.HOTKEY_START.upper()} 啟動 / {config.HOTKEY_STOP.upper()} 停止 / {config.HOTKEY_DEBUG.upper()} 讀取滑鼠座標")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.mainloop()
 

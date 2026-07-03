@@ -1,10 +1,15 @@
 # ── All adjustable settings ────────────────────────────────
 
 # Hotkeys (these are read from your real keyboard by the `keyboard` library
-# to start/stop the bot — unrelated to the mouse-click controls below, which
-# is what actually gets sent to the game)
+# to control the bot/tooling — unrelated to the mouse-click controls below,
+# which is what actually gets sent to the game)
 HOTKEY_START = "f1"
 HOTKEY_STOP  = "f2"
+# Debug: after pressing this, hover the mouse over a button in the game and
+# wait — the GUI logs the mouse's screen position so you can update
+# MOVE_POINTS/COLLECT_POINTS/JUMP_POINT later without editing any code.
+HOTKEY_DEBUG = "f3"
+DEBUG_POSITION_DELAY = 3   # Seconds to wait after pressing the debug hotkey before reading the mouse position
 
 # ── Material settings (each material configured independently) ──
 # Only "big tree" is collected (small/medium trees are skipped); the four ore
@@ -153,11 +158,28 @@ SCAN_INTERVAL   = 1.0    # Interval between scans (seconds)
 RESPAWN_WAIT    = 30     # Wait time after collecting, for respawn (seconds)
 
 # ── Idling when no material is found ────────────────────────
-# True: return to the position where the bot started (treated as "home") and
-#       idle there, only re-scanning every IDLE_SCAN_INTERVAL seconds
+# True: return to "home" and idle there, only re-scanning every
+#       IDLE_SCAN_INTERVAL seconds
 # False: use the old SEARCH_PATTERN to wander around looking for materials
 RETURN_HOME_WHEN_IDLE = True
 IDLE_SCAN_INTERVAL    = 20   # How often to scan for a respawned material while idling (seconds)
+
+# ── How "home" is found ──────────────────────────────────────
+# Option A (default, no setup): "home" is wherever the character stood when
+# the bot started, tracked by accumulating button-hold seconds — an
+# approximation that can drift over time (see README's "known limitations").
+#
+# Option B (more reliable): capture a fixed, recognizable landmark near where
+# you want to idle (a rock, building corner, distinctive ground texture —
+# anything static and unique) with capture_helper.py's "home_landmark"
+# category, while standing exactly where you want home to be. The tool
+# prints the (dx, dy) offset to paste into HOME_LANDMARK_OFFSET below. Once
+# HOME_LANDMARK_IMAGE is set, the bot walks by tracking that landmark's
+# on-screen position instead of the accumulated estimate — no drift, but
+# falls back to the estimate if the landmark isn't visible (e.g. too far away).
+HOME_LANDMARK_IMAGE  = None   # e.g. "images/home_landmark_1.png" (can be a list, like MATERIALS)
+HOME_LANDMARK_OFFSET = (0, 0) # (dx, dy) printed by capture_helper.py when you capture the landmark
+HOME_REACH_RADIUS    = 40     # Within this many px of the target counts as "arrived home"
 
 # Used when no material is found and RETURN_HOME_WHEN_IDLE = False
 SEARCH_DURATION = 3.0    # How long to wander when no material is found (seconds)

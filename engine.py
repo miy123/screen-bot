@@ -284,13 +284,15 @@ def _hold_point(direction, duration):
 def _release_mouse():
     pyautogui.mouseUp()
 
-def _wanted_direction(mat_pos):
-    """Pick a single direction to hold toward the material (only one mouse button can be held at a time)."""
+def _wanted_direction(target_pos, reach_radius=None):
+    """Pick a single direction to hold toward target_pos (only one mouse button can be held at a time)."""
+    if reach_radius is None:
+        reach_radius = config.REACH_RADIUS
     cx, cy = screen_center()
-    dx = mat_pos[0] - cx
-    dy = mat_pos[1] - cy
-    want_x = abs(dx) > config.REACH_RADIUS * 0.4
-    want_y = abs(dy) > config.REACH_RADIUS * 0.4
+    dx = target_pos[0] - cx
+    dy = target_pos[1] - cy
+    want_x = abs(dx) > reach_radius * 0.4
+    want_y = abs(dy) > reach_radius * 0.4
     if not want_x and not want_y:
         return None
     if want_x and (not want_y or abs(dx) >= abs(dy)):
@@ -309,29 +311,34 @@ def _try_unstuck(stop_fn, log_fn):
     time.sleep(0.1)
     return not stop_fn()
 
-def approach_material(stop_fn, log_fn=print):
-    """Keep moving toward the nearest material, with stuck detection."""
+def _move_toward(find_target_fn, reach_radius, stop_fn, log_fn, arrived_msg, lost_msg):
+    """
+    Keep moving toward whatever find_target_fn(screen) returns (a screen
+    position, or None once the target is out of view), with stuck detection.
+    Returns True once within reach_radius, False if the target was lost or
+    escaping a stuck position failed.
+    """
     held_dir = None
-    last_mat_pos = None
+    last_pos = None
     last_moved_at = time.time()
     stuck_attempts = 0
 
     try:
         while not stop_fn():
             screen = capture_screen()
-            mat_pos, _ = find_nearest_material(screen)
+            pos = find_target_fn(screen)
 
-            if mat_pos is None:
-                log_fn("移動中素材消失")
-                break
+            if pos is None:
+                log_fn(lost_msg)
+                return False
 
-            dist = distance(mat_pos, screen_center())
-            if dist <= config.REACH_RADIUS:
-                log_fn(f"到達（距離 {dist:.0f}px）")
-                break
+            dist = distance(pos, screen_center())
+            if dist <= reach_radius:
+                log_fn(arrived_msg.format(dist=dist))
+                return True
 
-            if last_mat_pos is not None:
-                moved = distance(mat_pos, last_mat_pos)
+            if last_pos is not None:
+                moved = distance(pos, last_pos)
                 if moved > config.STUCK_MOVEMENT_THRESHOLD:
                     last_moved_at = time.time()
                     stuck_attempts = 0
@@ -339,17 +346,17 @@ def approach_material(stop_fn, log_fn=print):
                     stuck_attempts += 1
                     if stuck_attempts > config.STUCK_MAX_ATTEMPTS:
                         log_fn(f"脫困失敗 {stuck_attempts} 次，放棄")
-                        break
+                        return False
                     log_fn(f"卡住，第 {stuck_attempts} 次脫困")
                     if not _try_unstuck(stop_fn, log_fn):
-                        break
+                        return False
                     last_moved_at = time.time()
-                    last_mat_pos = None
+                    last_pos = None
                     held_dir = None
                     continue
 
-            last_mat_pos = mat_pos
-            wanted = _wanted_direction(mat_pos)
+            last_pos = pos
+            wanted = _wanted_direction(pos, reach_radius)
             if wanted != held_dir:
                 _release_mouse()
                 if wanted is not None:
@@ -359,8 +366,17 @@ def approach_material(stop_fn, log_fn=print):
                 _track_move(held_dir, config.SCAN_WHILE_MOVING)
             time.sleep(config.SCAN_WHILE_MOVING)
 
+        return False
     finally:
         _release_mouse()
+
+def approach_material(stop_fn, log_fn=print):
+    """Keep moving toward the nearest material, with stuck detection."""
+    def find(screen):
+        pos, _ = find_nearest_material(screen)
+        return pos
+    return _move_toward(find, config.REACH_RADIUS, stop_fn, log_fn,
+                         "到達（距離 {dist:.0f}px）", "移動中素材消失")
 
 def _material_desired_direction(mat_pos):
     """Given a material's position, return the direction the character should face ("up"/"down"/"left"/"right")."""
@@ -445,17 +461,49 @@ def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
     ]
     tactics[attempt % len(tactics)]()
 
-def go_home(stop_fn, log_fn):
-    """Walk back to the position where the bot started (home) to idle, using the accumulated button-hold-seconds estimate to compute the return path."""
+def _landmark_virtual_target(screen_bgr):
+    """
+    Locate the home landmark and translate its offset from where it should
+    appear when the character is home into a "virtual material position" —
+    feeding this into the same _move_toward machinery used for materials
+    walks the character back to wherever the landmark was captured from.
+    """
+    matches = _find_matches_multi(screen_bgr, config.HOME_LANDMARK_IMAGE)
+    if not matches:
+        return None
+    landmark_pos = max(matches, key=lambda m: m[1])[0]
+    cx, cy = screen_center()
+    ox, oy = config.HOME_LANDMARK_OFFSET
+    target = (cx + ox, cy + oy)
+    return (cx + (landmark_pos[0] - target[0]), cy + (landmark_pos[1] - target[1]))
+
+def _go_home_by_estimate(stop_fn, log_fn):
+    """Walk back using the accumulated button-hold-seconds estimate (approximate, drifts over time)."""
     if abs(_position["x"]) < 0.05 and abs(_position["y"]) < 0.05:
         return
-    log_fn("回中心待機")
+    log_fn("回中心待機（估計位置）")
     if abs(_position["x"]) >= 0.05 and not stop_fn():
         d = "left" if _position["x"] > 0 else "right"
         _hold_point(d, abs(_position["x"]))
     if abs(_position["y"]) >= 0.05 and not stop_fn():
         d = "up" if _position["y"] > 0 else "down"
         _hold_point(d, abs(_position["y"]))
+
+def go_home(stop_fn, log_fn):
+    """
+    Return to "home" to idle. If HOME_LANDMARK_IMAGE is set, navigates by
+    tracking that landmark's on-screen position (accurate, doesn't drift);
+    otherwise (or if the landmark can't be found) falls back to the
+    accumulated button-hold-seconds estimate.
+    """
+    if config.HOME_LANDMARK_IMAGE:
+        log_fn("回中心待機（地標導航）")
+        arrived = _move_toward(_landmark_virtual_target, config.HOME_REACH_RADIUS, stop_fn, log_fn,
+                                "已回到中心（距離 {dist:.0f}px）", "地標消失，改用估計位置回中心")
+        if arrived or stop_fn():
+            return
+
+    _go_home_by_estimate(stop_fn, log_fn)
 
 def search_wander(stop_fn, log_fn=print):
     log_fn("搜尋中：遊走一圈")
