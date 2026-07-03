@@ -277,13 +277,18 @@ def _track_move(direction, duration):
 
 def _hold_point(direction, duration):
     """Hold the mouse down on the on-screen button for `direction` for `duration` seconds, updating facing and the estimated position."""
-    pyautogui.mouseDown(*config.MOVE_POINTS[direction])
+    pyautogui.moveTo(*config.MOVE_ORIGIN)
+    pyautogui.mouseDown()
+    pyautogui.moveTo(*config.MOVE_POINTS[direction], duration=0.05)
+
     time.sleep(duration)
+
     pyautogui.mouseUp()
     _track_move(direction, duration)
 
 def _release_mouse():
     pyautogui.mouseUp()
+    pyautogui.moveTo(*config.MOVE_ORIGIN, duration=0.02)
 
 def _wanted_direction(target_pos, reach_radius=None):
     """Pick a single direction to hold toward target_pos (only one mouse button can be held at a time)."""
@@ -313,22 +318,19 @@ def _try_unstuck(stop_fn, log_fn):
     return not stop_fn()
 
 def _move_toward(find_target_fn, reach_radius, stop_fn, log_fn, arrived_msg, lost_msg):
-    """
-    Keep moving toward whatever find_target_fn(screen) returns (a screen
-    position, or None once the target is out of view), with stuck detection.
-    Returns True once within reach_radius, False if the target was lost or
-    escaping a stuck position failed.
-    """
     held_dir = None
     last_pos = None
     last_moved_at = time.time()
     stuck_attempts = 0
 
+    MOVE_PULSE = getattr(config, "MOVE_PULSE", 0.08)
+
     try:
         while not stop_fn():
             screen = capture_screen()
+            log_fn("capture_screen");
             pos = find_target_fn(screen)
-
+            log_fn("find_target_fn");
             if pos is None:
                 log_fn(lost_msg)
                 return False
@@ -338,36 +340,52 @@ def _move_toward(find_target_fn, reach_radius, stop_fn, log_fn, arrived_msg, los
                 log_fn(arrived_msg.format(dist=dist))
                 return True
 
+            # ── stuck detection（保留原邏輯） ─────────────────────
             if last_pos is not None:
                 moved = distance(pos, last_pos)
+
                 if moved > config.STUCK_MOVEMENT_THRESHOLD:
                     last_moved_at = time.time()
                     stuck_attempts = 0
+
                 elif time.time() - last_moved_at > config.STUCK_TIMEOUT:
                     stuck_attempts += 1
                     if stuck_attempts > config.STUCK_MAX_ATTEMPTS:
                         log_fn(f"脫困失敗 {stuck_attempts} 次，放棄")
                         return False
+
                     log_fn(f"卡住，第 {stuck_attempts} 次脫困")
                     if not _try_unstuck(stop_fn, log_fn):
                         return False
+
                     last_moved_at = time.time()
                     last_pos = None
                     held_dir = None
                     continue
 
             last_pos = pos
-            wanted = _wanted_direction(pos, reach_radius)
-            if wanted != held_dir:
-                _release_mouse()
-                if wanted is not None:
-                    pyautogui.mouseDown(*config.MOVE_POINTS[wanted])
-                held_dir = wanted
-            if held_dir is not None:
-                _track_move(held_dir, config.SCAN_WHILE_MOVING)
-            time.sleep(config.SCAN_WHILE_MOVING)
 
+            wanted = _wanted_direction(pos, reach_radius)
+
+            # ── 🔥 核心改動：脈衝式輸入 ─────────────────────
+            if wanted is not None:
+                pyautogui.moveTo(*config.MOVE_ORIGIN)
+                pyautogui.mouseDown()
+                pyautogui.moveTo(
+                    *config.MOVE_POINTS[wanted],
+                    duration=0.03
+                )
+                time.sleep(MOVE_PULSE)
+                pyautogui.mouseUp()
+                _track_move(wanted, MOVE_PULSE)
+            else:
+                _release_mouse()
+
+            held_dir = wanted
+
+            time.sleep(config.SCAN_WHILE_MOVING)
         return False
+
     finally:
         _release_mouse()
 

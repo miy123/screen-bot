@@ -75,12 +75,15 @@ SCAN_REGION = None
 #
 # In this game, holding a direction button also turns the character to face
 # that direction (there's no separate turn button).
+MOVE_ORIGIN = (289, 877)
 MOVE_POINTS = {
     "up":    (292, 811),
     "down":  (286, 944),
     "left":  (220, 880),
     "right": (355, 881),
 }
+
+MOVE_PULSE = 0.1
 
 # Named collect-action buttons. Each material's "collect_action" above refers
 # to one of these names.
@@ -94,7 +97,7 @@ COLLECT_POINTS = {
 JUMP_POINT = None   # e.g. (x, y)
 
 # Scan frequency while moving (seconds), 0.05~0.15 recommended
-SCAN_WHILE_MOVING = 0.08
+SCAN_WHILE_MOVING = 0.02
 
 # Within this many px of screen center counts as "arrived"
 REACH_RADIUS = 100
@@ -162,7 +165,7 @@ RESPAWN_WAIT    = 30     # Wait time after collecting, for respawn (seconds)
 #       IDLE_SCAN_INTERVAL seconds
 # False: use the old SEARCH_PATTERN to wander around looking for materials
 RETURN_HOME_WHEN_IDLE = True
-IDLE_SCAN_INTERVAL    = 20   # How often to scan for a respawned material while idling (seconds)
+IDLE_SCAN_INTERVAL    = 1   # How often to scan for a respawned material while idling (seconds)
 
 # ── How "home" is found ──────────────────────────────────────
 # Option A (default, no setup): "home" is wherever the character stood when
