@@ -1,49 +1,53 @@
 # ── All adjustable settings ────────────────────────────────
 
-# Hotkeys
+# Hotkeys (these are read from your real keyboard by the `keyboard` library
+# to start/stop the bot — unrelated to the mouse-click controls below, which
+# is what actually gets sent to the game)
 HOTKEY_START = "f1"
 HOTKEY_STOP  = "f2"
 
 # ── Material settings (each material configured independently) ──
 # Only "big tree" is collected (small/medium trees are skipped); the four ore
-# types share the same collect key.
-# For image paths, use capture_helper.py to capture a screenshot, then rename
-# the resulting captured_N.png (+ _mask.png) to match the filenames below and
-# drop them into the images/ folder.
+# types share the same collect action.
+# For image paths, use capture_helper.py to capture a screenshot — it will
+# ask which material/facing you're capturing and name the files for you.
 #
 # "image" can also be a list, meaning "multiple templates for the same thing"
 # — e.g. if a material has a sway animation or looks different under
 # different lighting, capture a few more screenshots and list them all; a
 # match against any one of them counts as a hit:
 #   "image": ["images/tree_big_1.png", "images/tree_big_2.png"],
+#
+# "collect_action" refers to a name in COLLECT_POINTS below (the on-screen
+# button to click), not a keyboard key.
 MATERIALS = [
     {
         "image":            ["images/tree_big_1.png", "images/tree_big_2.png", "images/tree_big_3.png"],   # Big tree
-        "collect_key":      "2",
+        "collect_action":   "lumber",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
         "image":            ["images/ore_stone_1.png"],  # Stone ore
-        "collect_key":      "3",
+        "collect_action":   "ore",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
         "image":            ["images/ore_stone_1.png"], # Copper ore
-        "collect_key":      "3",
+        "collect_action":   "ore",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
         "image":            ["images/ore_stone_1.png"], # Silver ore
-        "collect_key":      "3",
+        "collect_action":   "ore",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
     {
         "image":            ["images/ore_stone_1.png"],   # Gold ore
-        "collect_key":      "3",
+        "collect_action":   "ore",
         "collect_times":    5,
         "collect_interval": 0.4,
     },
@@ -55,15 +59,34 @@ MATCH_THRESHOLD = 0.75
 # Scan region: None = full screen, or (left, top, right, bottom)
 SCAN_REGION = None
 
-# ── Movement settings ───────────────────────────────────────
-# This game moves with arrow keys, and the movement direction is also the
-# character's facing direction (there's no separate turn key).
-MOVE_KEYS = {
-    "up":    "up",
-    "down":  "down",
-    "left":  "left",
-    "right": "right",
+# ── Control scheme: on-screen buttons clicked with the mouse ─────
+# The game doesn't accept simulated keyboard input, so movement/turning and
+# collect actions are done by clicking/holding fixed on-screen button
+# coordinates with pyautogui's mouse functions instead of keyDown/press.
+#
+# Find each button's (x, y): move the mouse over it, wait a moment, then read
+# pyautogui.position(). These coordinates are tied to your current screen
+# resolution and the game window's position/size — redo this if either changes.
+#
+# In this game, holding a direction button also turns the character to face
+# that direction (there's no separate turn button).
+MOVE_POINTS = {
+    "up":    (292, 811),
+    "down":  (286, 944),
+    "left":  (220, 880),
+    "right": (355, 881),
 }
+
+# Named collect-action buttons. Each material's "collect_action" above refers
+# to one of these names.
+COLLECT_POINTS = {
+    "lumber": (1531, 881),   # 伐木
+    "ore":    (1577, 773),   # 採礦
+}
+
+# Optional jump button used when trying to escape being stuck; leave as None
+# to skip the jump step entirely (there's no keyboard jump fallback anymore).
+JUMP_POINT = None   # e.g. (x, y)
 
 # Scan frequency while moving (seconds), 0.05~0.15 recommended
 SCAN_WHILE_MOVING = 0.08
@@ -76,17 +99,17 @@ COLLECT_VERIFY_DELAY = 0.8   # Seconds to wait after pressing the collect key be
 COLLECT_RETRY_MAX    = 2     # Max re tries if collecting fails
 
 # ── Realign after a failed collect ──────────────────────────
-# The movement keys double as facing direction, so realigning first taps the
-# direction key that faces the material; if already facing correctly but
-# still can't collect, it cycles through strafing / advance-retreat to shake
-# free of a stuck position.
+# The movement buttons double as facing direction, so realigning first taps
+# the direction button that faces the material; if already facing correctly
+# but still can't collect, it cycles through strafing / advance-retreat to
+# shake free of a stuck position.
 REALIGN_BACK_DURATION   = 0.4    # Back-off duration (seconds)
 REALIGN_STRAFE_DURATION = 0.25   # Strafe/turn duration (seconds)
 
 # ── Character facing detection (advanced, optional) ─────────
-# Normally facing is estimated from "the last direction key pressed", which
-# is usually good enough. But if the character gets blocked by terrain and a
-# direction key press doesn't actually turn/move it, the estimate can drift
+# Normally facing is estimated from "the last direction button pressed",
+# which is usually good enough. But if the character gets blocked by terrain
+# and a direction press doesn't actually turn/move it, the estimate can drift
 # from reality.
 # For more accuracy, use capture_helper.py to capture freeze-frames of the
 # character facing up/down/left/right, save them under the filenames below,
@@ -124,8 +147,6 @@ STUCK_TIMEOUT           = 3.0   # Seconds without movement before considered stu
 STUCK_MOVEMENT_THRESHOLD = 5    # Movement below this many px counts as "not moved"
 STUCK_ESCAPE_DURATION   = 0.4   # How long to move in each escape direction (seconds)
 STUCK_MAX_ATTEMPTS      = 3     # Max number of escape attempts
-
-JUMP_KEY = "space"
 
 # ── Loop settings ────────────────────────────────────────────
 SCAN_INTERVAL   = 1.0    # Interval between scans (seconds)

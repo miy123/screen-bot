@@ -120,7 +120,7 @@ def _find_matches_multi(screen_bgr, image_field):
 def find_nearest_material(screen_bgr):
     """
     Scan for all materials, return the (pos, material_dict) closest to screen center.
-    material_dict contains image/collect_key/collect_times/collect_interval.
+    material_dict contains image/collect_action/collect_times/collect_interval.
     Positions currently under quarantine are never selected as a target.
     """
     all_candidates = []
@@ -188,20 +188,27 @@ def _is_quarantined(mat_pos):
     return distance(mat_pos, _quarantine["pos"]) <= config.SAME_MATERIAL_TOLERANCE
 
 # ── Movement ──────────────────────────────────────────────
-# In this game the movement keys double as the character's facing direction
-# (there's no separate turn key), so:
-# - Current facing: estimated by default from "the last direction key
-#   pressed", no screenshot needed. If CHARACTER_CROP + FACING_IMAGES are
+# The game doesn't accept simulated keyboard input, so movement/turning is
+# done by holding the mouse button down on fixed on-screen direction buttons
+# (config.MOVE_POINTS) instead of holding a keyboard key. Since there's only
+# one mouse cursor, only one direction can be held at a time — no diagonal
+# (two direction buttons at once) like the old keyboard version could do;
+# the dominant axis is picked each tick instead (see _wanted_direction).
+#
+# In this game holding a direction button also turns the character to face
+# that direction (there's no separate turn button), so:
+# - Current facing: estimated by default from "the last direction button
+#   held", no screenshot needed. If CHARACTER_CROP + FACING_IMAGES are
 #   set, screenshot comparison is used instead (more accurate, catches the
-#   case of "pressed a direction key but terrain blocked it, so it didn't
+#   case of "held a direction button but terrain blocked it, so it didn't
 #   actually turn"); falls back to the estimate automatically when unset.
 # - Current position: there's no readable coordinate, so "seconds spent
-#   holding a direction key" is accumulated as a relative offset from the
+#   holding a direction button" is accumulated as a relative offset from the
 #   spawn point (home); returning home holds the opposite direction for the
 #   same duration (an approximation, not exact).
 
-_position = {"x": 0.0, "y": 0.0}   # Estimated offset from home (unit: key-hold seconds)
-_facing = {"dir": None}            # Key-estimated facing: "up"/"down"/"left"/"right"
+_position = {"x": 0.0, "y": 0.0}   # Estimated offset from home (unit: button-hold seconds)
+_facing = {"dir": None}            # Estimated facing: "up"/"down"/"left"/"right"
 
 def reset_position():
     _position["x"] = 0.0
@@ -211,7 +218,7 @@ def detect_facing(screen_bgr):
     """
     Detect the character's current facing via screenshot comparison.
     Requires CHARACTER_CROP and FACING_IMAGES; missing either returns None
-    (callers automatically fall back to the key-estimated facing).
+    (callers automatically fall back to the button-estimated facing).
     Each direction can be a single image or a list (e.g. multiple frames of
     an idle/walk animation for that facing) — the highest-scoring match in
     the list wins.
@@ -243,7 +250,7 @@ def detect_facing(screen_bgr):
 
 def current_facing(force_detect=False):
     """
-    Normally returns the key-estimated facing (cheap, no screenshot).
+    Normally returns the button-estimated facing (cheap, no screenshot).
     When force_detect=True and CHARACTER_CROP/FACING_IMAGES are set, uses
     screenshot comparison instead (used once the same material has failed
     several times in a row and the estimate is suspected to be wrong).
@@ -253,12 +260,6 @@ def current_facing(force_detect=False):
         if detected:
             return detected
     return _facing["dir"]
-
-def _key_to_dir(key):
-    for d, k in config.MOVE_KEYS.items():
-        if k == key:
-            return d
-    return None
 
 def _track_move(direction, duration):
     if direction is None:
@@ -273,42 +274,44 @@ def _track_move(direction, duration):
     elif direction == "up":
         _position["y"] -= duration
 
-def _hold_key(key, duration):
-    """Hold a direction key for `duration` seconds, updating facing and the estimated position."""
-    pyautogui.keyDown(key)
+def _hold_point(direction, duration):
+    """Hold the mouse down on the on-screen button for `direction` for `duration` seconds, updating facing and the estimated position."""
+    pyautogui.mouseDown(*config.MOVE_POINTS[direction])
     time.sleep(duration)
-    pyautogui.keyUp(key)
-    _track_move(_key_to_dir(key), duration)
+    pyautogui.mouseUp()
+    _track_move(direction, duration)
 
-def _wanted_keys(mat_pos):
+def _release_mouse():
+    pyautogui.mouseUp()
+
+def _wanted_direction(mat_pos):
+    """Pick a single direction to hold toward the material (only one mouse button can be held at a time)."""
     cx, cy = screen_center()
     dx = mat_pos[0] - cx
     dy = mat_pos[1] - cy
-    keys = set()
-    if abs(dx) > config.REACH_RADIUS * 0.4:
-        keys.add(config.MOVE_KEYS["right" if dx > 0 else "left"])
-    if abs(dy) > config.REACH_RADIUS * 0.4:
-        keys.add(config.MOVE_KEYS["down" if dy > 0 else "up"])
-    return keys
-
-def _release_all_move_keys():
-    for key in config.MOVE_KEYS.values():
-        pyautogui.keyUp(key)
+    want_x = abs(dx) > config.REACH_RADIUS * 0.4
+    want_y = abs(dy) > config.REACH_RADIUS * 0.4
+    if not want_x and not want_y:
+        return None
+    if want_x and (not want_y or abs(dx) >= abs(dy)):
+        return "right" if dx > 0 else "left"
+    return "down" if dy > 0 else "up"
 
 def _try_unstuck(stop_fn, log_fn):
-    _release_all_move_keys()
+    _release_mouse()
     if stop_fn():
         return False
-    pyautogui.press(config.JUMP_KEY)
-    time.sleep(0.2)
-    escape_key = random.choice(list(config.MOVE_KEYS.values()))
-    _hold_key(escape_key, config.STUCK_ESCAPE_DURATION)
+    if config.JUMP_POINT:
+        pyautogui.click(*config.JUMP_POINT)
+        time.sleep(0.2)
+    escape_dir = random.choice(list(config.MOVE_POINTS.keys()))
+    _hold_point(escape_dir, config.STUCK_ESCAPE_DURATION)
     time.sleep(0.1)
     return not stop_fn()
 
 def approach_material(stop_fn, log_fn=print):
     """Keep moving toward the nearest material, with stuck detection."""
-    held_keys = set()
+    held_dir = None
     last_mat_pos = None
     last_moved_at = time.time()
     stuck_attempts = 0
@@ -342,25 +345,25 @@ def approach_material(stop_fn, log_fn=print):
                         break
                     last_moved_at = time.time()
                     last_mat_pos = None
-                    held_keys = set()
+                    held_dir = None
                     continue
 
             last_mat_pos = mat_pos
-            wanted = _wanted_keys(mat_pos)
-            for k in held_keys - wanted:
-                pyautogui.keyUp(k)
-            for k in wanted - held_keys:
-                pyautogui.keyDown(k)
-            held_keys = wanted
-            for k in held_keys:
-                _track_move(_key_to_dir(k), config.SCAN_WHILE_MOVING)
+            wanted = _wanted_direction(mat_pos)
+            if wanted != held_dir:
+                _release_mouse()
+                if wanted is not None:
+                    pyautogui.mouseDown(*config.MOVE_POINTS[wanted])
+                held_dir = wanted
+            if held_dir is not None:
+                _track_move(held_dir, config.SCAN_WHILE_MOVING)
             time.sleep(config.SCAN_WHILE_MOVING)
 
     finally:
-        _release_all_move_keys()
+        _release_mouse()
 
 def _material_desired_direction(mat_pos):
-    """Given a material's position, return the direction key the character should face ("up"/"down"/"left"/"right")."""
+    """Given a material's position, return the direction the character should face ("up"/"down"/"left"/"right")."""
     cx, cy = screen_center()
     dx = mat_pos[0] - cx
     dy = mat_pos[1] - cy
@@ -369,20 +372,20 @@ def _material_desired_direction(mat_pos):
     return "down" if dy > 0 else "up"
 
 # ── Realign after a failed collect ──────────────────────────
-# In this game the movement keys double as turning, so "turning" is just a
-# quick tap of the relevant direction key.
+# In this game the movement buttons double as turning, so "turning" is just
+# a quick hold of the relevant direction button.
 def _tactic_face_material(mat_pos, stop_fn, log_fn):
     desired = _material_desired_direction(mat_pos)
     log_fn(f"重對準：轉向面對素材（{desired}）")
-    _hold_key(config.MOVE_KEYS[desired], config.REALIGN_STRAFE_DURATION)
+    _hold_point(desired, config.REALIGN_STRAFE_DURATION)
     time.sleep(0.1)
 
-def _tactic_strafe(cross_keys, stop_fn, log_fn):
+def _tactic_strafe(cross_dirs, stop_fn, log_fn):
     log_fn("重對準：側移")
-    for ck in cross_keys:
+    for d in cross_dirs:
         if stop_fn():
             return
-        _hold_key(ck, config.REALIGN_STRAFE_DURATION)
+        _hold_point(d, config.REALIGN_STRAFE_DURATION)
         time.sleep(0.1)
 
 def _tactic_advance_retreat(mat_pos, stop_fn, log_fn):
@@ -391,11 +394,11 @@ def _tactic_advance_retreat(mat_pos, stop_fn, log_fn):
     toward_dir = _material_desired_direction(mat_pos)
     back_dir = {"up": "down", "down": "up", "left": "right", "right": "left"}[toward_dir]
 
-    _hold_key(config.MOVE_KEYS[toward_dir], config.REALIGN_STRAFE_DURATION)
+    _hold_point(toward_dir, config.REALIGN_STRAFE_DURATION)
     time.sleep(0.1)
     if stop_fn():
         return
-    _hold_key(config.MOVE_KEYS[back_dir], config.REALIGN_STRAFE_DURATION)
+    _hold_point(back_dir, config.REALIGN_STRAFE_DURATION)
     time.sleep(0.1)
 
 def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
@@ -403,9 +406,9 @@ def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
     Realign toward the material after a failed collect:
     1. Back off first, to avoid being stuck inside the material's hit area
     2. Determine whether the current facing is toward the material:
-       force_detect=False uses the (cheap) key estimate; force_detect=True
+       force_detect=False uses the (cheap) button-hold estimate; force_detect=True
        (same spot has failed several times in a row) prefers screenshot
-       detection instead — if not facing it, tap the direction key to correct it
+       detection instead — if not facing it, hold the direction button to correct it
     3. If already facing correctly but still can't collect → cycle through
        strafing / advance-retreat by retry count to shake free of a stuck position
     """
@@ -416,14 +419,14 @@ def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
     dx = mat_pos[0] - center[0]
     dy = mat_pos[1] - center[1]
 
-    away_key  = config.MOVE_KEYS["left"  if dx > 0 else "right"]
-    cross_keys = [
-        config.MOVE_KEYS["up"   if dy > 0 else "down"],
-        config.MOVE_KEYS["down" if dy > 0 else "up"  ],
+    away_dir = "left" if dx > 0 else "right"
+    cross_dirs = [
+        "up"   if dy > 0 else "down",
+        "down" if dy > 0 else "up",
     ]
 
     log_fn("重對準：退後")
-    _hold_key(away_key, config.REALIGN_BACK_DURATION)
+    _hold_point(away_dir, config.REALIGN_BACK_DURATION)
     time.sleep(0.1)
     if stop_fn():
         return
@@ -437,22 +440,22 @@ def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
         return
 
     tactics = [
-        lambda: _tactic_strafe(cross_keys, stop_fn, log_fn),
+        lambda: _tactic_strafe(cross_dirs, stop_fn, log_fn),
         lambda: _tactic_advance_retreat(mat_pos, stop_fn, log_fn),
     ]
     tactics[attempt % len(tactics)]()
 
 def go_home(stop_fn, log_fn):
-    """Walk back to the position where the bot started (home) to idle, using the accumulated key-seconds estimate to compute the return path."""
+    """Walk back to the position where the bot started (home) to idle, using the accumulated button-hold-seconds estimate to compute the return path."""
     if abs(_position["x"]) < 0.05 and abs(_position["y"]) < 0.05:
         return
     log_fn("回中心待機")
     if abs(_position["x"]) >= 0.05 and not stop_fn():
-        key = config.MOVE_KEYS["left" if _position["x"] > 0 else "right"]
-        _hold_key(key, abs(_position["x"]))
+        d = "left" if _position["x"] > 0 else "right"
+        _hold_point(d, abs(_position["x"]))
     if abs(_position["y"]) >= 0.05 and not stop_fn():
-        key = config.MOVE_KEYS["up" if _position["y"] > 0 else "down"]
-        _hold_key(key, abs(_position["y"]))
+        d = "up" if _position["y"] > 0 else "down"
+        _hold_point(d, abs(_position["y"]))
 
 def search_wander(stop_fn, log_fn=print):
     log_fn("搜尋中：遊走一圈")
@@ -460,12 +463,12 @@ def search_wander(stop_fn, log_fn=print):
     for d in config.SEARCH_PATTERN:
         if stop_fn():
             break
-        _hold_key(config.MOVE_KEYS[d], step)
+        _hold_point(d, step)
 
 # ── Collect (with facing verification and retry) ────────────
 def collect_with_verify(mat, stop_fn, log_fn=print):
     """
-    Press the collect key → wait → scan for whether the material vanished.
+    Click the collect button → wait → scan for whether the material vanished.
     If it's still there: realign (back off + turn/strafe/advance-retreat) →
     approach again → retry. Retries at most COLLECT_RETRY_MAX times.
 
@@ -476,9 +479,10 @@ def collect_with_verify(mat, stop_fn, log_fn=print):
     - Reaching STUCK_GIVE_UP_THRESHOLD → temporarily give up on this spot and
       look for another material instead
     """
-    key   = mat["collect_key"]
-    times = mat["collect_times"]
-    ivl   = mat["collect_interval"]
+    action = mat["collect_action"]
+    point  = config.COLLECT_POINTS[action]
+    times  = mat["collect_times"]
+    ivl    = mat["collect_interval"]
 
     screen = capture_screen()
     site_pos, _ = find_nearest_material(screen)
@@ -492,11 +496,11 @@ def collect_with_verify(mat, stop_fn, log_fn=print):
             return False
 
         tag = f"（第 {attempt+1} 次）" if attempt > 0 else ""
-        log_fn(f"採集{tag}：按 {key} × {times}")
+        log_fn(f"採集{tag}：點擊 {action} × {times}")
         for _ in range(times):
             if stop_fn():
                 return False
-            pyautogui.press(key)
+            pyautogui.click(*point)
             time.sleep(ivl)
 
         time.sleep(config.COLLECT_VERIFY_DELAY)

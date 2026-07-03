@@ -1,7 +1,10 @@
 # Screen Bot
 
-用螢幕截圖 + 圖像比對辨識遊戲畫面中的素材（樹、礦石…），自動移動過去、按鍵採集，
-採不到時會重對準再試，找不到素材時回中心待機，全部靠模擬鍵盤操作，不讀取遊戲記憶體。
+用螢幕截圖 + 圖像比對辨識遊戲畫面中的素材（樹、礦石…），自動移動過去、點擊按鈕採集，
+採不到時會重對準再試，找不到素材時回中心待機，全部靠模擬滑鼠操作，不讀取遊戲記憶體。
+
+> 這款遊戲目前吃不到模擬鍵盤輸入，所以移動／轉向／採集都改成用滑鼠點擊/按住畫面上固定的按鈕座標，
+> 不是按鍵盤。詳見下面「控制方式」。
 
 ## 需求與安裝
 
@@ -12,15 +15,36 @@ pip install -r requirements.txt
 需要 Python 3 + `pyautogui`、`opencv-python`、`pillow`、`keyboard`（打包用 `pyinstaller`）。
 
 Windows 上 `keyboard` 套件需要系統管理員權限才能註冊全域熱鍵，所以要**以系統管理員身分執行**
-`python bot.py`（或打包後的 exe），不然 F1/F2 熱鍵不會有反應。
+`python bot.py`（或打包後的 exe），不然 F1/F2 熱鍵不會有反應。`F1`/`F2` 讀的是你自己實體鍵盤的按鍵
+（用來控制腳本本身啟動/停止），跟遊戲吃不吃模擬鍵盤是兩回事。
 
 ## 快速開始
 
-1. 用 `capture_helper.py` 截圖，存出素材（大樹、各種礦石）跟需要的話再截角色朝上下左右的定格畫面。
+1. 用 `capture_helper.py` 截圖，工具會先問你現在要截哪個素材／面向，自動存成對應檔名。
 2. 用 `test_recognition.py` 拿截圖 + 模板測一下辨識效果，調到 `MATCH_THRESHOLD` 抓得穩。
-3. 打開 `config.py`，把素材圖片路徑、採集鍵等填好（詳見下面「config.py 設定」）。
-4. 執行 `python bot.py` 開啟控制面板。
-5. `F1` 啟動、`F2` 停止；滑鼠移到螢幕左上角可以緊急停止（pyautogui 的 failsafe）。
+3. 找出遊戲畫面上移動/採集按鈕的螢幕座標（把滑鼠移到按鈕上，用某種方式讀出當下座標，
+   例如暫時在程式裡加一行 `print(pyautogui.position())`），填進 `config.py` 的 `MOVE_POINTS`／`COLLECT_POINTS`。
+4. 打開 `config.py`，把素材圖片路徑、對應的 `collect_action` 等填好（詳見下面「config.py 設定」）。
+5. 執行 `python bot.py` 開啟控制面板。
+6. `F1` 啟動、`F2` 停止；滑鼠移到螢幕左上角可以緊急停止（pyautogui 的 failsafe）。
+
+## 控制方式：滑鼠點擊畫面按鈕
+
+這款遊戲不接受模擬鍵盤，所以所有操作都改成 `pyautogui` 的滑鼠功能（`mouseDown`/`mouseUp`/`click`），
+點擊/按住畫面上固定的按鈕座標，而不是按鍵盤：
+
+- `config.MOVE_POINTS`：上下左右方向鈕的螢幕座標。按住＝持續朝該方向移動，這款遊戲移動同時也是轉向
+  （按哪個方向鈕角色就轉向哪邊，沒有獨立轉向鈕）。
+- `config.COLLECT_POINTS`：具名的採集按鈕座標（例如 `"lumber"` 是伐木鈕、`"ore"` 是採礦鈕），
+  `MATERIALS` 每一項用 `collect_action` 指定要點哪一個。
+- `config.JUMP_POINT`：選用的跳躍鈕座標，用在卡住脫困時；沒有這個按鈕就留 `None`，脫困時會跳過這一步。
+
+**重要限制：只有一個滑鼠游標，同一時間只能按住一個按鈕**，不像鍵盤可以同時按住兩個方向鍵做斜向移動。
+所以現在移動時會挑「距離較遠的那個軸」單獨按住（例如目標在右上方，會先往右修正，等左右對齊得差不多了
+才切換成往上修正），用來逼近斜向目標，但不是真正同時的斜向移動。
+
+這些座標是綁定「目前螢幕解析度＋遊戲視窗位置/大小」的，換解析度、視窗搬過位置、或視窗大小改變
+都要重新抓一次座標，不然點擊的位置就不對了。
 
 ## 運作方式
 
@@ -33,25 +57,36 @@ Windows 上 `keyboard` 套件需要系統管理員權限才能註冊全域熱鍵
 - **尋找素材中**：對 `config.MATERIALS` 每一種素材做樣板比對，找螢幕上距離角色（畫面中心）最近的一個。
   找不到的話，若 `RETURN_HOME_WHEN_IDLE = True` 就走回啟動時的位置待機，每隔
   `IDLE_SCAN_INTERVAL` 秒才重新掃描一次；設 `False` 則用舊的 `SEARCH_PATTERN` 到處遊走找。
-- **移動靠近中**：持續按方向鍵靠近，含卡住偵測（久了沒移動就跳一下、換方向逃脫）。
-- **採集中**：按 `collect_key` 採集鍵，等一下再重掃一次確認素材是否消失。
-  沒消失就「重對準」（退後 → 面向素材的方向鍵沒按對就補按 → 側移／前進後退甩開卡位）再靠近一次重試，
+- **移動靠近中**：持續按住方向按鈕靠近，含卡住偵測（久了沒移動就跳一下、換方向逃脫）。
+- **採集中**：點擊 `collect_action` 對應的採集按鈕，等一下再重掃一次確認素材是否消失。
+  沒消失就「重對準」（退後 → 面向素材的方向按鈕沒按對就補按 → 側移／前進後退甩開卡位）再靠近一次重試，
   最多重試 `COLLECT_RETRY_MAX` 次。
 - **同一位置持續失敗**：跨越好幾輪都採不到同一顆（位置在 `SAME_MATERIAL_TOLERANCE` 內視為同一顆），
   累積到 `STUCK_FAIL_THRESHOLD` 次會改用截圖判定面向（如果有設定，見下面），
   累積到 `STUCK_GIVE_UP_THRESHOLD` 次就暫時放棄這個位置 `STUCK_QUARANTINE_SECONDS` 秒，改找別的素材。
 - **等待刷新**：採集成功後原地等 `RESPAWN_WAIT` 秒再重新尋找。
 
-這款遊戲的移動鍵同時也是角色面向（按哪個方向鍵就轉向哪邊，沒有獨立轉向鍵），
-所以角色目前面向預設是用「最後按的方向鍵」去估計；角色目前位置也沒有座標可讀，
-是用「往某方向按鍵的秒數」累加成一個相對於出生點（中心）的估計位移，回中心待機時再用相反方向按回去。
-兩者都只是估計值，不是絕對精準的座標系統。
+### 「中心點」是什麼、人物移動後怎麼回去
+
+這裡的「中心點」不是螢幕上某個固定像素位置，而是**角色在遊戲世界裡、你按下 F1 啟動當下站的那個位置**。
+`screen_center()` 回傳的是螢幕（或 `SCAN_REGION`）正中央的像素座標，這是固定不變的，用來代表「角色目前所在
+的螢幕位置」——因為這款遊戲的鏡頭會跟著角色走，角色永遠畫在畫面中間附近，所以可以拿這個固定像素點當作
+「角色現在在哪」的替代品，並不是真的在讀角色的世界座標。
+
+角色離開啟動位置之後，程式並沒有辦法讀到真正的世界座標，只能用「往某個方向按住按鈕的秒數」累加成一個
+估計位移（`engine._position`，出發時歸零）：每次移動/重對準/脫困，都會依按住的方向與時間更新這個估計值。
+`go_home()` 要回中心待機時，就是往相反方向按住同樣的秒數，把這個估計值歸零。
+
+這只是「用時間換算距離」的估算法，不是真的座標系統，長時間跑下來會累積誤差——例如卡地形、被打斷移動、
+或移動速度本身不是完全穩定的情況，都會讓估計值跟角色實際位置慢慢對不上。
 
 ## 素材截圖與辨識
 
-- `capture_helper.py`：截圖工具。左鍵加點框出素材的多邊形範圍、右鍵/Enter 存檔，
-  存出 `images/captured_N.png` + `images/captured_N_mask.png`（遮罩，讓比對只看素材本體、忽略背景）。
-  截完把檔名改成 `config.py` 對應的名稱（例如 `tree_big.png`）。
+- `capture_helper.py`：截圖工具。啟動後（或按 `M`）會先問你現在要截哪個素材／面向
+  （清單在檔案開頭的 `CATEGORIES`，跟 `config.py` 的素材/面向名稱對應），之後存檔會自動用
+  `<名稱>_<編號>.png` 命名，編號會接續 `images/` 資料夾裡已經有的檔案，不會覆蓋、也不用你自己改檔名。
+  操作：左鍵加點框出多邊形、右鍵/Enter 存檔（存出 `.png` + `_mask.png` 遮罩）、`G` 重新截一張畫面
+  （拍下一個動畫幀/時間點時用）、`M` 換素材、`Q` 離開。
 - `test_recognition.py`：離線測試工具，不用真的跑機器人。
   `python test_recognition.py <截圖> <模板> [門檻]`，視窗內用 `+`/`-` 調門檻、`R` 重跑，
   可以看到比對分數跟熱圖，用來決定 `config.MATCH_THRESHOLD` 設多少比較穩。
@@ -60,27 +95,28 @@ Windows 上 `keyboard` 套件需要系統管理員權限才能註冊全域熱鍵
   ```python
   "image": ["images/tree_big_1.png", "images/tree_big_2.png"],
   ```
-  比對時任一張命中就算數。
+  比對時任一張命中就算數，也正好對應 `capture_helper.py` 自動編號存出來的檔名。
 
 ## config.py 設定
 
 | 設定 | 說明 |
 |---|---|
-| `HOTKEY_START` / `HOTKEY_STOP` | 啟動／停止熱鍵 |
-| `MATERIALS` | 素材清單，每項要有 `image`（路徑或清單）、`collect_key`（採集鍵）、`collect_times`（按幾次）、`collect_interval`（每次間隔秒數） |
+| `HOTKEY_START` / `HOTKEY_STOP` | 啟動／停止熱鍵（讀你自己的實體鍵盤，跟遊戲吃不吃鍵盤無關） |
+| `MATERIALS` | 素材清單，每項要有 `image`（路徑或清單）、`collect_action`（對應 `COLLECT_POINTS` 的名稱）、`collect_times`（點幾次）、`collect_interval`（每次間隔秒數） |
 | `MATCH_THRESHOLD` | 圖像比對信心門檻（0~1），用 `test_recognition.py` 調 |
 | `SCAN_REGION` | 只掃描螢幕的一部分，`None` 代表全螢幕 |
-| `MOVE_KEYS` | 上下左右對應的實際按鍵；這款遊戲用方向鍵，移動方向＝角色面向 |
+| `MOVE_POINTS` | 上下左右方向按鈕的螢幕座標（滑鼠按住＝持續朝該方向移動＋轉向） |
+| `COLLECT_POINTS` | 具名採集按鈕的螢幕座標，`MATERIALS` 用 `collect_action` 指定要點哪一個 |
+| `JUMP_POINT` | 選用的跳躍按鈕座標，脫困時用；沒有就留 `None` |
 | `SCAN_WHILE_MOVING` | 邊走邊重新掃描素材位置的頻率（秒） |
 | `REACH_RADIUS` | 距離角色（畫面中心）幾 px 內視為已到達素材旁邊 |
-| `COLLECT_VERIFY_DELAY` / `COLLECT_RETRY_MAX` | 按完採集鍵等幾秒確認消失／最多重試幾次 |
-| `REALIGN_BACK_DURATION` / `REALIGN_STRAFE_DURATION` | 重對準時退後／側移或轉向的按鍵時長 |
-| `CHARACTER_CROP` / `FACING_IMAGES` | 進階、選用：設定角色在螢幕上的範圍 + 朝上下左右的定格截圖，開啟後同一顆素材連續失敗多次時會改用截圖判定面向（沒設定就一直用按鍵估計） |
+| `COLLECT_VERIFY_DELAY` / `COLLECT_RETRY_MAX` | 按完採集鈕等幾秒確認消失／最多重試幾次 |
+| `REALIGN_BACK_DURATION` / `REALIGN_STRAFE_DURATION` | 重對準時退後／側移或轉向的按住時長 |
+| `CHARACTER_CROP` / `FACING_IMAGES` | 進階、選用：設定角色在螢幕上的範圍 + 朝上下左右的定格截圖，開啟後同一顆素材連續失敗多次時會改用截圖判定面向（沒設定就一直用按鈕估計） |
 | `SAME_MATERIAL_TOLERANCE` | 幾 px 內視為「同一顆」素材（用來累計持續失敗次數） |
 | `STUCK_FAIL_THRESHOLD` | 同一顆累積失敗幾次後，優先改用截圖判定面向 |
 | `STUCK_GIVE_UP_THRESHOLD` / `STUCK_QUARANTINE_SECONDS` | 累積失敗幾次後暫時放棄、放棄後幾秒內不再選它 |
 | `STUCK_TIMEOUT` / `STUCK_MOVEMENT_THRESHOLD` / `STUCK_ESCAPE_DURATION` / `STUCK_MAX_ATTEMPTS` | 移動中卡住的偵測與脫困參數 |
-| `JUMP_KEY` | 脫困時按的跳躍鍵 |
 | `SCAN_INTERVAL` | 找不到素材、用遊走模式時，每輪掃描間隔 |
 | `RESPAWN_WAIT` | 採集成功後原地等待刷新的秒數 |
 | `RETURN_HOME_WHEN_IDLE` / `IDLE_SCAN_INTERVAL` | 找不到素材時是否回中心待機、待機時多久掃描一次 |
@@ -110,21 +146,10 @@ Windows 上可以用 `build.bat`（呼叫 PyInstaller）打包成獨立資料夾
 
 ## 已知限制
 
-- 角色目前位置是用「往某方向按鍵的秒數」累加估算，不是真的座標，長時間跑下來可能會累積誤差
-  （例如卡地形、被打斷移動時）。
-- 角色面向預設用按鍵估計；`CHARACTER_CROP`/`FACING_IMAGES` 是可選的加強，沒截圖設定就不會啟用。
-
-
-
-上
-Point(x=292, y=811)
-下
-Point(x=286, y=944)
-左
-Point(x=220, y=880)
-右
-Point(x=355, y=881)
-伐木
-Point(x=1531, y=881)
-採礦
-Point(x=1577, y=773)
+- 角色目前位置是用「往某方向按住按鈕的秒數」累加估算，不是真的座標，長時間跑下來可能會累積誤差
+  （例如卡地形、被打斷移動時）。詳見上面「中心點是什麼」。
+- 角色面向預設用按鈕估計；`CHARACTER_CROP`/`FACING_IMAGES` 是可選的加強，沒截圖設定就不會啟用。
+- 滑鼠只有一個游標，同一時間只能按住一個方向按鈕，沒辦法像鍵盤那樣同時按兩個方向做真正的斜向移動，
+  只能用「先修正距離較遠的那一軸」來逼近。
+- `MOVE_POINTS`/`COLLECT_POINTS`/`JUMP_POINT` 的座標綁定目前的螢幕解析度和遊戲視窗位置/大小，
+  換了就要重新抓一次座標。

@@ -101,11 +101,6 @@ class BotGUI:
         self._thread.start()
 
     def stop_bot(self):
-        print("移動滑鼠到目標位置，3秒後讀取")
-        time.sleep(3)
-        
-        print(pyautogui.position())
-        
         if self._engine:
             self._engine.stop()
         self.start_btn.config(state="normal")
