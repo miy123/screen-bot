@@ -23,6 +23,7 @@ Saves two files per capture, named after what you're currently capturing:
 
 import os
 import re
+import json
 import time
 import cv2
 import numpy as np
@@ -30,12 +31,15 @@ from PIL import ImageGrab
 
 os.makedirs("images", exist_ok=True)
 
+HOME_META_PATH = "images/home_landmark.json"
+
 # What you can capture. Keep this in sync with the material/facing names used
 # in config.py's MATERIALS / FACING_IMAGES.
 #
 # "home_landmark" is special: capture it while standing exactly where you
-# want the bot to idle. The tool computes and prints how far its center is
-# from the middle of the screen — paste that into config.HOME_LANDMARK_OFFSET.
+# want the bot to idle. No config.py editing needed — this tool automatically
+# writes images/home_landmark.json (image list + offset from screen center)
+# and the bot picks it up on its own.
 CATEGORIES = [
     "tree_big",
     "ore_stone",
@@ -62,6 +66,14 @@ def _next_index_for(name):
     pattern = re.compile(rf"^{re.escape(name)}_(\d+)\.png$")
     used = [int(m.group(1)) for f in os.listdir("images") if (m := pattern.match(f))]
     return max(used, default=0) + 1
+
+
+def _update_home_landmark_meta(offset):
+    """Write images/home_landmark.json so the bot can find the landmark and its offset with zero config.py editing."""
+    pattern = re.compile(r"^home_landmark_\d+\.png$")
+    imgs = sorted(f"images/{f}" for f in os.listdir("images") if pattern.match(f))
+    with open(HOME_META_PATH, "w", encoding="utf-8") as f:
+        json.dump({"images": imgs, "offset": list(offset)}, f, ensure_ascii=False, indent=2)
 
 
 def choose_category():
@@ -144,10 +156,9 @@ def save_polygon():
 
     if current_name == "home_landmark":
         sh, sw = orig.shape[:2]
-        dx, dy = (x + w // 2) - sw // 2, (y + h // 2) - sh // 2
-        print(f"→ 這是中心點地標，相對畫面中心偏移 dx={dx}, dy={dy}")
-        print(f"   把這行貼進 config.py： HOME_LANDMARK_OFFSET = ({dx}, {dy})")
-        print(f'   並設定 HOME_LANDMARK_IMAGE = "{template_path}"（多張的話存成清單）')
+        offset = ((x + w // 2) - sw // 2, (y + h // 2) - sh // 2)
+        _update_home_landmark_meta(offset)
+        print(f"→ 中心點地標已就緒，偏移 dx={offset[0]}, dy={offset[1]}（已自動寫入 {HOME_META_PATH}，不用改 config.py）")
 
     next_index += 1
     print(f"下一張會存成 {current_name}_{next_index}.png（按 M 可換素材，按 G 可重新截圖）")
@@ -176,6 +187,13 @@ def save_rect():
     path = f"images/{current_name}_{next_index}.png"
     cv2.imwrite(path, crop)
     print(f"已存矩形 {path}")
+
+    if current_name == "home_landmark":
+        sh, sw = orig.shape[:2]
+        offset = (((x1 + x2) // 2) - sw // 2, ((y1 + y2) // 2) - sh // 2)
+        _update_home_landmark_meta(offset)
+        print(f"→ 中心點地標已就緒，偏移 dx={offset[0]}, dy={offset[1]}（已自動寫入 {HOME_META_PATH}，不用改 config.py）")
+
     next_index += 1
     points = []
     redraw()

@@ -4,6 +4,7 @@ Core automation logic: scan → move → collect (with verify & retry)
 
 import os
 import sys
+import json
 import time
 import random
 import cv2
@@ -461,19 +462,38 @@ def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
     ]
     tactics[attempt % len(tactics)]()
 
-def _landmark_virtual_target(screen_bgr):
+_HOME_META_PATH = _resolve("images/home_landmark.json")
+
+def _load_home_landmark():
+    """
+    Load the home landmark image(s) + offset written by capture_helper.py's
+    "home_landmark" category, if any. Nothing to configure by hand — capturing
+    the landmark is enough. Returns (images, offset) or (None, None).
+    """
+    try:
+        with open(_HOME_META_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        images = data.get("images")
+        offset = data.get("offset")
+        if images and offset:
+            return images, tuple(offset)
+    except (OSError, ValueError, KeyError):
+        pass
+    return None, None
+
+def _landmark_virtual_target(screen_bgr, images, offset):
     """
     Locate the home landmark and translate its offset from where it should
     appear when the character is home into a "virtual material position" —
     feeding this into the same _move_toward machinery used for materials
     walks the character back to wherever the landmark was captured from.
     """
-    matches = _find_matches_multi(screen_bgr, config.HOME_LANDMARK_IMAGE)
+    matches = _find_matches_multi(screen_bgr, images)
     if not matches:
         return None
     landmark_pos = max(matches, key=lambda m: m[1])[0]
     cx, cy = screen_center()
-    ox, oy = config.HOME_LANDMARK_OFFSET
+    ox, oy = offset
     target = (cx + ox, cy + oy)
     return (cx + (landmark_pos[0] - target[0]), cy + (landmark_pos[1] - target[1]))
 
@@ -491,14 +511,17 @@ def _go_home_by_estimate(stop_fn, log_fn):
 
 def go_home(stop_fn, log_fn):
     """
-    Return to "home" to idle. If HOME_LANDMARK_IMAGE is set, navigates by
-    tracking that landmark's on-screen position (accurate, doesn't drift);
-    otherwise (or if the landmark can't be found) falls back to the
-    accumulated button-hold-seconds estimate.
+    Return to "home" to idle. If images/home_landmark.json exists (written by
+    capture_helper.py's "home_landmark" category), navigates by tracking that
+    landmark's on-screen position (accurate, doesn't drift); otherwise (or if
+    the landmark can't currently be found) falls back to the accumulated
+    button-hold-seconds estimate.
     """
-    if config.HOME_LANDMARK_IMAGE:
+    images, offset = _load_home_landmark()
+    if images:
         log_fn("回中心待機（地標導航）")
-        arrived = _move_toward(_landmark_virtual_target, config.HOME_REACH_RADIUS, stop_fn, log_fn,
+        arrived = _move_toward(lambda screen: _landmark_virtual_target(screen, images, offset),
+                                config.HOME_REACH_RADIUS, stop_fn, log_fn,
                                 "已回到中心（距離 {dist:.0f}px）", "地標消失，改用估計位置回中心")
         if arrived or stop_fn():
             return

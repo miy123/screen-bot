@@ -169,17 +169,16 @@ IDLE_SCAN_INTERVAL    = 20   # How often to scan for a respawned material while 
 # the bot started, tracked by accumulating button-hold seconds — an
 # approximation that can drift over time (see README's "known limitations").
 #
-# Option B (more reliable): capture a fixed, recognizable landmark near where
-# you want to idle (a rock, building corner, distinctive ground texture —
-# anything static and unique) with capture_helper.py's "home_landmark"
-# category, while standing exactly where you want home to be. The tool
-# prints the (dx, dy) offset to paste into HOME_LANDMARK_OFFSET below. Once
-# HOME_LANDMARK_IMAGE is set, the bot walks by tracking that landmark's
-# on-screen position instead of the accumulated estimate — no drift, but
-# falls back to the estimate if the landmark isn't visible (e.g. too far away).
-HOME_LANDMARK_IMAGE  = None   # e.g. "images/home_landmark_1.png" (can be a list, like MATERIALS)
-HOME_LANDMARK_OFFSET = (0, 0) # (dx, dy) printed by capture_helper.py when you capture the landmark
-HOME_REACH_RADIUS    = 40     # Within this many px of the target counts as "arrived home"
+# Option B (more reliable, no config editing needed): capture a fixed,
+# recognizable landmark near where you want to idle (a rock, building
+# corner, distinctive ground texture — anything static and unique) with
+# capture_helper.py's "home_landmark" category, while standing exactly where
+# you want home to be. That tool automatically writes images/home_landmark.json
+# (the image(s) + offset from screen center) — nothing to paste in here. Once
+# that file exists, the bot walks by tracking the landmark's on-screen
+# position instead of the accumulated estimate — no drift, but falls back to
+# the estimate if the landmark isn't visible (e.g. too far away).
+HOME_REACH_RADIUS = 40   # Within this many px of the target counts as "arrived home"
 
 # Used when no material is found and RETURN_HOME_WHEN_IDLE = False
 SEARCH_DURATION = 3.0    # How long to wander when no material is found (seconds)
