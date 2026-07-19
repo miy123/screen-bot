@@ -7,12 +7,25 @@ import sys
 import json
 import time
 import random
+import traceback
 import cv2
 import numpy as np
 import pyautogui
+import pydirectinput
 from PIL import ImageGrab
 
 import config
+
+# pyautogui/pydirectinput both default to a 0.1s pause AFTER every call
+# (moveTo, mouseDown, mouseUp, keyDown, keyUp, ...) meant for human-speed
+# scripting — left at default, every _hold_point() call was silently holding
+# the button ~0.1-0.2s longer than its requested duration (mouseDown() then
+# moveTo() to the direction point each eat a 0.1s pause while the button is
+# already down), which is proportionally huge for the short recorded moves
+# FIXED_ROUTE_RECORDED_SCALE has been compensating for. Disable it — timing
+# here is controlled explicitly via time.sleep(duration) instead.
+pyautogui.PAUSE = 0
+pydirectinput.PAUSE = 0
 
 # ── Path resolution (still finds images correctly after exe packaging) ──
 def _resolve(path):
@@ -118,25 +131,44 @@ def _find_matches_multi(screen_bgr, image_field):
         return []
     return _nms(all_matches, min_dist=min_side * 0.6)
 
+_scan_state = {"index": 0}   # Sticky index into config.MATERIALS — see find_nearest_material
+
+def reset_scan_state():
+    _scan_state["index"] = 0
+
 def find_nearest_material(screen_bgr):
     """
-    Scan for all materials, return the (pos, material_dict) closest to screen center.
-    material_dict contains image/collect_action/collect_times/collect_interval.
-    Positions currently under quarantine are never selected as a target.
+    Scan for a material to target, one type at a time instead of always
+    scanning every configured material (each type is a full-screen
+    matchTemplate call, so scanning all of them every tick is the main
+    cause of slow scans).
+
+    Sticky behavior: stay on whichever material type last had a hit, and
+    keep scanning only that type. Only when it comes up empty do we step
+    to the next configured type, trying each in turn (at most once around
+    the full list) until one has a match. Positions currently under
+    quarantine are never selected as a target.
     """
-    all_candidates = []
-    for mat in config.MATERIALS:
+    n = len(config.MATERIALS)
+    start = _scan_state["index"] % n
+
+    for step in range(n):
+        idx = (start + step) % n
+        mat = config.MATERIALS[idx]
+
+        candidates = []
         for pos, conf in _find_matches_multi(screen_bgr, mat["image"]):
             if _is_quarantined(pos):
                 continue
-            all_candidates.append((pos, conf, mat))
+            candidates.append((pos, conf))
 
-    if not all_candidates:
-        return None, None
+        if candidates:
+            _scan_state["index"] = idx
+            center = screen_center()
+            nearest = min(candidates, key=lambda c: distance(c[0], center))
+            return nearest[0], mat
 
-    center = screen_center()
-    nearest = min(all_candidates, key=lambda m: distance(m[0], center))
-    return nearest[0], nearest[2]   # (pos, material_dict)
+    return None, None
 
 def material_visible(screen_bgr, mat):
     """Check whether a specific material is still on screen."""
@@ -189,12 +221,16 @@ def _is_quarantined(mat_pos):
     return distance(mat_pos, _quarantine["pos"]) <= config.SAME_MATERIAL_TOLERANCE
 
 # ── Movement ──────────────────────────────────────────────
-# The game doesn't accept simulated keyboard input, so movement/turning is
-# done by holding the mouse button down on fixed on-screen direction buttons
-# (config.MOVE_POINTS) instead of holding a keyboard key. Since there's only
-# one mouse cursor, only one direction can be held at a time — no diagonal
-# (two direction buttons at once) like the old keyboard version could do;
-# the dominant axis is picked each tick instead (see _wanted_direction).
+# Plain simulated keyboard input doesn't register with this game, which is
+# why movement/turning defaulted to holding the mouse button down on fixed
+# on-screen direction buttons (config.MOVE_POINTS) instead of holding a
+# keyboard key — config.USE_KEYBOARD_MOVEMENT switches to pydirectinput's
+# scan-code-based key holds instead, still being tested against the mouse
+# scheme (see that config comment for why scan codes might work where plain
+# simulated keys didn't). Either way only one input can be held at a time
+# (one mouse cursor, and _hold_point() only holds one key), so no diagonal
+# (two directions at once) like a human player could do; the dominant axis
+# is picked each tick instead (see _wanted_direction).
 #
 # In this game holding a direction button also turns the character to face
 # that direction (there's no separate turn button), so:
@@ -276,15 +312,46 @@ def _track_move(direction, duration):
         _position["y"] -= duration
 
 def _hold_point(direction, duration):
-    """Hold the mouse down on the on-screen button for `direction` for `duration` seconds, updating facing and the estimated position."""
-    pyautogui.moveTo(*config.MOVE_ORIGIN)
-    pyautogui.mouseDown()
-    pyautogui.moveTo(*config.MOVE_POINTS[direction], duration=0.05)
+    """
+    Hold `direction` — a single direction, or a list of directions to hold
+    at once (e.g. ["up", "right"] for a real diagonal, the way a human
+    player holding two WASD keys together actually moves) — for `duration`
+    seconds, updating facing and the estimated position. Two mutually
+    exclusive control schemes, picked by config.USE_KEYBOARD_MOVEMENT:
+    - keyboard (config.MOVE_KEYS): holds every key in the list down at once
+      via pydirectinput, which injects hardware scan codes through SendInput
+      rather than the virtual-key codes plain keyboard-simulation libraries
+      use — this game was found to ignore virtual-key simulated input but
+      accepts real keyboard, so scan codes are worth testing as "close
+      enough to real" before assuming keyboard control is impossible. True
+      simultaneous multi-key holds are only possible here, not with mouse.
+    - mouse (config.MOVE_POINTS): the original scheme — click-drag onto an
+      on-screen D-pad button and hold the mouse down there. Only one button
+      can be held at a time (one cursor), so multiple directions fall back
+      to holding each one in turn for the full duration (same approximation
+      config.py's algorithmic diamond-piece route already uses for its own
+      diagonal steps) — this takes len(directions) times longer than the
+      keyboard scheme's true simultaneous hold, not an equivalent substitute.
+    """
+    directions = [direction] if isinstance(direction, str) else list(direction)
 
-    time.sleep(duration)
+    if config.USE_KEYBOARD_MOVEMENT:
+        keys = [config.MOVE_KEYS[d] for d in directions]
+        for key in keys:
+            pydirectinput.keyDown(key, _pause=False)
+        time.sleep(duration)
+        for key in keys:
+            pydirectinput.keyUp(key, _pause=False)
+    else:
+        for d in directions:
+            pyautogui.moveTo(*config.MOVE_ORIGIN)
+            pyautogui.mouseDown()
+            pyautogui.moveTo(*config.MOVE_POINTS[d])
+            time.sleep(duration)
+            pyautogui.mouseUp()
 
-    pyautogui.mouseUp()
-    _track_move(direction, duration)
+    for d in directions:
+        _track_move(d, duration)
 
 def _release_mouse():
     pyautogui.mouseUp()
@@ -320,8 +387,10 @@ def _try_unstuck(stop_fn, log_fn):
 def _move_toward(find_target_fn, reach_radius, stop_fn, log_fn, arrived_msg, lost_msg):
     held_dir = None
     last_pos = None
+    last_dist = None
     last_moved_at = time.time()
     stuck_attempts = 0
+    miss_streak = 0
 
     MOVE_PULSE = getattr(config, "MOVE_PULSE", 0.08)
 
@@ -332,12 +401,29 @@ def _move_toward(find_target_fn, reach_radius, stop_fn, log_fn, arrived_msg, los
             pos = find_target_fn(screen)
             log_fn("find_target_fn");
             if pos is None:
-                log_fn(lost_msg)
-                return False
+                # Tolerate a couple of consecutive misses (occlusion by the character's
+                # own sprite at close range, a stray animation frame) before giving up —
+                # a single missed tick otherwise aborted the approach even when the
+                # material was still right there.
+                miss_streak += 1
+                if miss_streak >= config.APPROACH_MISS_TOLERANCE:
+                    # It was already fairly close on the last successful reading right
+                    # before it vanished — most likely we've simply gotten close enough
+                    # that our own character sprite is now covering it, not that it
+                    # actually moved away. Treat that as arrival rather than failure.
+                    if last_dist is not None and last_dist <= reach_radius * config.APPROACH_DISAPPEAR_ARRIVAL_FACTOR:
+                        log_fn(arrived_msg.format(dist=last_dist) + "（消失前已在附近，視為抵達）")
+                        return True
+                    log_fn(lost_msg)
+                    return False
+                continue
+            miss_streak = 0
 
             dist = distance(pos, screen_center())
+            last_dist = dist
             if dist <= reach_radius:
                 log_fn(arrived_msg.format(dist=dist))
+                log_fn(f"　目標座標={pos}｜人物座標（估計，相對起點秒數）=({_position['x']:.2f}, {_position['y']:.2f})")
                 return True
 
             # ── stuck detection（保留原邏輯） ─────────────────────
@@ -389,11 +475,30 @@ def _move_toward(find_target_fn, reach_radius, stop_fn, log_fn, arrived_msg, los
     finally:
         _release_mouse()
 
-def approach_material(stop_fn, log_fn=print):
-    """Keep moving toward the nearest material, with stuck detection."""
+def approach_material(mat, stop_fn, log_fn=print):
+    """
+    Keep moving toward one specific material (the one already chosen — not
+    re-picked every tick), with stuck detection.
+
+    Tracks that one instance by proximity continuity between ticks (nearest
+    to where we last saw it), not "nearest to screen center" every tick: with
+    two instances of the same material both roughly ahead, nearest-to-center
+    can flip between them from one tick to the next as their exact detected
+    position jitters slightly, which made the character zig-zag between two
+    different trees/ores instead of walking straight at the one it found.
+    """
+    tracked = {"pos": None}
+
     def find(screen):
-        pos, _ = find_nearest_material(screen)
-        return pos
+        candidates = [pos for pos, _ in _find_matches_multi(screen, mat["image"]) if not _is_quarantined(pos)]
+        if not candidates:
+            return None
+
+        reference = tracked["pos"] if tracked["pos"] is not None else screen_center()
+        target = min(candidates, key=lambda p: distance(p, reference))
+        tracked["pos"] = target
+        return target
+
     return _move_toward(find, config.REACH_RADIUS, stop_fn, log_fn,
                          "到達（距離 {dist:.0f}px）", "移動中素材消失")
 
@@ -409,64 +514,67 @@ def _material_desired_direction(mat_pos):
 # ── Realign after a failed collect ──────────────────────────
 # In this game the movement buttons double as turning, so "turning" is just
 # a quick hold of the relevant direction button.
-def _tactic_face_material(mat_pos, stop_fn, log_fn):
-    desired = _material_desired_direction(mat_pos)
-    log_fn(f"重對準：轉向面對素材（{desired}）")
-    _hold_point(desired, config.REALIGN_STRAFE_DURATION)
-    time.sleep(0.1)
+#
+# Realign strategies are data (config.REALIGN_STRATEGIES), not code: each is
+# a sequence of (role, duration_multiplier) steps, where role is one of
+# "toward"/"away"/"side1"/"side2" — resolved per-call from mat_pos via
+# _realign_axes(), since the material's screen-space direction changes as the
+# character (and camera) moves. All durations are expressed as a multiple of
+# config.REALIGN_STEP_DURATION seconds of button-hold time, deliberately NOT
+# derived from any pixel distance — the on-screen coordinate of a fixed
+# object shifts as the character moves (the camera follows the character), so
+# "hold time" is the only stable, movement-independent unit available here
+# (same reasoning as the existing _position/_track_move estimate).
+_OPPOSITE_DIR = {"up": "down", "down": "up", "left": "right", "right": "left"}
 
-def _tactic_strafe(cross_dirs, stop_fn, log_fn):
-    log_fn("重對準：側移")
-    for d in cross_dirs:
-        if stop_fn():
-            return
-        _hold_point(d, config.REALIGN_STRAFE_DURATION)
-        time.sleep(0.1)
-
-def _tactic_advance_retreat(mat_pos, stop_fn, log_fn):
-    """Step forward then back, to shake free of being stuck at the edge/inside the material's hit detection."""
-    log_fn("重對準：前進後退（甩脫卡位）")
-    toward_dir = _material_desired_direction(mat_pos)
-    back_dir = {"up": "down", "down": "up", "left": "right", "right": "left"}[toward_dir]
-
-    _hold_point(toward_dir, config.REALIGN_STRAFE_DURATION)
-    time.sleep(0.1)
-    if stop_fn():
-        return
-    _hold_point(back_dir, config.REALIGN_STRAFE_DURATION)
-    time.sleep(0.1)
-
-def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
-    """
-    Realign toward the material after a failed collect:
-    1. Back off first, to avoid being stuck inside the material's hit area
-    2. Determine whether the current facing is toward the material:
-       force_detect=False uses the (cheap) button-hold estimate; force_detect=True
-       (same spot has failed several times in a row) prefers screenshot
-       detection instead — if not facing it, hold the direction button to correct it
-    3. If already facing correctly but still can't collect → cycle through
-       strafing / advance-retreat by retry count to shake free of a stuck position
-    """
-    if stop_fn():
-        return
-
+def _realign_axes(mat_pos):
+    """Resolve toward/away/side1/side2 directions relative to mat_pos, dominant-axis first."""
+    toward = _material_desired_direction(mat_pos)
     center = screen_center()
     dx = mat_pos[0] - center[0]
     dy = mat_pos[1] - center[1]
+    if toward in ("left", "right"):
+        side1, side2 = ("up", "down") if dy >= 0 else ("down", "up")
+    else:
+        side1, side2 = ("left", "right") if dx >= 0 else ("right", "left")
+    return {"toward": toward, "away": _OPPOSITE_DIR[toward], "side1": side1, "side2": side2}
 
-    away_dir = "left" if dx > 0 else "right"
-    cross_dirs = [
-        "up"   if dy > 0 else "down",
-        "down" if dy > 0 else "up",
-    ]
+def _tactic_face_material(mat_pos, stop_fn, log_fn):
+    desired = _material_desired_direction(mat_pos)
+    log_fn(f"重對準：轉向面對素材（{desired}）")
+    _hold_point(desired, config.REALIGN_STEP_DURATION)
+    time.sleep(0.08)
 
-    log_fn("重對準：退後")
-    _hold_point(away_dir, config.REALIGN_BACK_DURATION)
-    time.sleep(0.1)
+def _run_realign_strategy(strategy, axes, stop_fn, log_fn):
+    desc = " → ".join(f"{axes[role]}{config.REALIGN_STEP_DURATION * mult:.2f}s" for role, mult in strategy)
+    log_fn(f"重對準：執行策略 {desc}")
+    for role, mult in strategy:
+        if stop_fn():
+            return
+        _hold_point(axes[role], config.REALIGN_STEP_DURATION * mult)
+        time.sleep(0.08)
+
+def _realign_toward(mat_pos, strategy_attempts, force_detect, stop_fn, log_fn):
+    """
+    Realign toward the material after a failed collect:
+    1. Determine whether the current facing is toward the material:
+       force_detect=False uses the (cheap) button-hold estimate; force_detect=True
+       (same spot has failed several times in a row) prefers screenshot
+       detection instead — if not facing it, just turn and return (the next
+       attempt re-checks from scratch rather than also moving this round).
+    2. If already facing correctly, run the current realign strategy from
+       config.REALIGN_STRATEGIES. strategy_attempts is the *total* tries at
+       this spot (carried across collect_with_verify calls via the stuck
+       tracker, not just this round's retry count) — each strategy gets
+       config.REALIGN_STRATEGY_REPEAT tries before moving on to the next one,
+       so a promising adjustment isn't abandoned after a single attempt but a
+       consistently-failing one doesn't get retried forever either.
+    """
     if stop_fn():
         return
 
-    desired = _material_desired_direction(mat_pos)
+    axes = _realign_axes(mat_pos)
+    desired = axes["toward"]
     facing = current_facing(force_detect)
     if facing != desired:
         source = "截圖判定" if force_detect else "按鍵估計"
@@ -474,11 +582,10 @@ def _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn):
         _tactic_face_material(mat_pos, stop_fn, log_fn)
         return
 
-    tactics = [
-        lambda: _tactic_strafe(cross_dirs, stop_fn, log_fn),
-        lambda: _tactic_advance_retreat(mat_pos, stop_fn, log_fn),
-    ]
-    tactics[attempt % len(tactics)]()
+    strategies = config.REALIGN_STRATEGIES
+    idx = (strategy_attempts // config.REALIGN_STRATEGY_REPEAT) % len(strategies)
+    log_fn(f"重對準：策略 {idx + 1}/{len(strategies)}（此位置已嘗試 {strategy_attempts} 次）")
+    _run_realign_strategy(strategies[idx], axes, stop_fn, log_fn)
 
 _HOME_META_PATH = _resolve("images/home_landmark.json")
 
@@ -558,8 +665,13 @@ def search_wander(stop_fn, log_fn=print):
 def collect_with_verify(mat, stop_fn, log_fn=print):
     """
     Click the collect button → wait → scan for whether the material vanished.
-    If it's still there: realign (back off + turn/strafe/advance-retreat) →
-    approach again → retry. Retries at most COLLECT_RETRY_MAX times.
+    If it's still there: realign (turn to face it, then run a realign
+    strategy — see config.REALIGN_STRATEGIES) → approach again → retry.
+    Retries at most COLLECT_RETRY_MAX times.
+
+    Returns True only on an actual successful collect (material vanished);
+    False if retries were exhausted (or the bot was stopped) — the caller
+    uses this to skip the respawn wait and retry immediately when stuck.
 
     Persistent failure at the "same spot" accumulates across rounds (see
     _stuck_tracker):
@@ -575,10 +687,20 @@ def collect_with_verify(mat, stop_fn, log_fn=print):
 
     screen = capture_screen()
     site_pos, _ = find_nearest_material(screen)
+    log_fn(f"鎖定採集目標，座標={site_pos}")
     prior_fails = _stuck_count_for(site_pos) if site_pos else 0
     force_detect = prior_fails >= config.STUCK_FAIL_THRESHOLD
     if force_detect:
         log_fn(f"這個位置已連續失敗 {prior_fails} 次，重對準改用截圖判定面向")
+
+    # Used only for the "still there" sanity check below — NOT site_pos.
+    # The screen's origin moves with the character, so once realign/approach
+    # has moved us, the same physical material's on-screen coordinate shifts
+    # too; comparing against the very first lock (site_pos) would misreport a
+    # real re-detection as "a different material" just because we walked.
+    # site_pos itself stays fixed — it's the key for cross-round stuck/quarantine
+    # tracking, which is intentionally independent of this per-attempt drift.
+    last_known_pos = site_pos
 
     for attempt in range(1 + config.COLLECT_RETRY_MAX):
         if stop_fn():
@@ -609,9 +731,19 @@ def collect_with_verify(mat, stop_fn, log_fn=print):
                 if site_pos:
                     _record_attempt(site_pos, True)
                 return True
-            log_fn("素材仍在，重對準後重試")
-            _realign_toward(mat_pos, attempt, force_detect, stop_fn, log_fn)
-            approach_material(stop_fn, log_fn)
+            same_spot = last_known_pos is not None and distance(mat_pos, last_known_pos) <= config.SAME_MATERIAL_TOLERANCE
+            spot_tag = "同一位置" if same_spot else "⚠️不同位置，疑似掃到別的素材"
+            log_fn(f"素材仍在，座標={mat_pos}（上次座標={last_known_pos}，{spot_tag}），重對準後重試")
+            _realign_toward(mat_pos, prior_fails + attempt, force_detect, stop_fn, log_fn)
+            approach_material(mat, stop_fn, log_fn)
+            if stop_fn():
+                return False
+            # Screen moved during realign/approach — refresh the baseline so
+            # the next attempt's comparison isn't against a stale coordinate.
+            screen = capture_screen()
+            refreshed_pos, _ = find_nearest_material(screen)
+            if refreshed_pos is not None:
+                last_known_pos = refreshed_pos
         else:
             log_fn("採集達重試上限，繼續下一輪")
 
@@ -621,7 +753,7 @@ def collect_with_verify(mat, stop_fn, log_fn=print):
             log_fn(f"這個位置累積失敗 {fail_count} 次，暫時放棄 {config.STUCK_QUARANTINE_SECONDS} 秒")
             _quarantine_position(site_pos)
 
-    return not stop_fn()
+    return False
 
 # ── Main state machine ───────────────────────────────────────
 class BotEngine:
@@ -650,6 +782,7 @@ class BotEngine:
     def start(self):
         self._running = True
         reset_position()
+        reset_scan_state()
         self.log("Bot 啟動")
         self._run_loop()
 
@@ -664,6 +797,18 @@ class BotEngine:
     def _run_loop(self):
         self.state = self.SEARCHING
 
+        try:
+            self._run_loop_body()
+        except Exception:
+            # An unhandled exception here would otherwise silently kill this
+            # background thread — the GUI just stops updating with no
+            # indication why, indistinguishable from "still working". Log it
+            # and stop cleanly instead.
+            self.log("發生未預期的錯誤，Bot 已自動停止：\n" + traceback.format_exc())
+            self._running = False
+            self.state = self.IDLE
+
+    def _run_loop_body(self):
         while self._running:
             screen = capture_screen()
             mat_pos, mat = find_nearest_material(screen)
@@ -688,28 +833,140 @@ class BotEngine:
                 continue
 
             dist = distance(mat_pos, screen_center())
-            self.log(f"發現 {mat['image']}，距離 {dist:.0f}px")
+            self.log(f"發現 {mat['image']}，距離 {dist:.0f}px，座標={mat_pos}")
 
             if dist > config.REACH_RADIUS:
                 self.state = self.APPROACHING
-                approach_material(self._stopped, self.log)
+                approach_material(mat, self._stopped, self.log)
 
             if not self._running:
                 return
 
             self.state = self.COLLECTING
-            collect_with_verify(mat, self._stopped, self.log)
+            collected = collect_with_verify(mat, self._stopped, self.log)
 
             if not self._running:
                 return
 
-            self.state = self.WAITING
-            self.log(f"等待刷新 {config.RESPAWN_WAIT} 秒")
-            for remaining in range(config.RESPAWN_WAIT, 0, -1):
-                if not self._running:
-                    return
-                if self.set_state_cb:
-                    self.set_state_cb(f"{self.WAITING}（{remaining}s）")
-                time.sleep(1)
+            # No respawn wait either way — go straight back to searching. There's
+            # usually other materials already available elsewhere, so idling here
+            # on the assumption *this* spot will respawn soon just wastes time.
+            self.log("採集成功，繼續尋找下一個目標" if collected else "採集失敗，繼續尋找下一個目標")
 
             self.state = self.SEARCHING
+
+
+# ── Fixed movement route ─────────────────────────────────────
+# Alternative to BotEngine: no image recognition at all — just a hand-authored
+# script of move/collect steps (config.FIXED_ROUTE), repeated in a loop.
+class FixedRouteEngine:
+    IDLE      = "閒置"
+    RUNNING   = "執行固定路線中"
+    RETURNING = "回到起點中"
+
+    def __init__(self, log_fn=print, state_fn=None, route=None):
+        """route defaults to config.FIXED_ROUTE (the full loop); pass e.g.
+        config.FIXED_ROUTE_TOP to run just one piece on its own (for testing/
+        tuning), still looping + returning home the same way. Whether this is
+        the full loop (vs a single-piece test) also decides how long to rest
+        after each lap — see FIXED_ROUTE_FULL_REST_SECONDS/FIXED_ROUTE_REST_SECONDS."""
+        self.log = log_fn
+        self.set_state_cb = state_fn
+        self._state = self.IDLE
+        self._running = False
+        self._is_full_route = route is None
+        self._route = route if route is not None else config.FIXED_ROUTE
+
+    @property
+    def state(self):
+        return self._state
+
+    @state.setter
+    def state(self, val):
+        self._state = val
+        if self.set_state_cb:
+            self.set_state_cb(val)
+
+    def start(self):
+        self._running = True
+        reset_position()
+        self.log("固定路線 Bot 啟動")
+        self._run_loop()
+
+    def stop(self):
+        self._running = False
+        self.state = self.IDLE
+        self.log("固定路線 Bot 暫停")
+
+    def _stopped(self):
+        return not self._running
+
+    def _run_loop(self):
+        self.state = self.RUNNING
+        try:
+            self._run_loop_body()
+        except Exception:
+            self.log("發生未預期的錯誤，Bot 已自動停止：\n" + traceback.format_exc())
+            self._running = False
+            self.state = self.IDLE
+
+    def _run_loop_body(self):
+        while self._running:
+            for i, step in enumerate(self._route):
+                if self._stopped():
+                    return
+                self._run_step(i, step)
+
+            if self._stopped():
+                return
+
+            # Each route already ends with its own reverse-path move steps
+            # (see config._reverse_home_moves) that walk back to the start —
+            # no image-recognition go_home() here, just reset the drift
+            # estimate since we should be back at zero.
+            self.log("整個區塊跑完一輪")
+            reset_position()
+
+            if self._stopped():
+                return
+
+            rest_seconds = config.FIXED_ROUTE_FULL_REST_SECONDS if self._is_full_route else config.FIXED_ROUTE_REST_SECONDS
+            self.state = self.RETURNING
+            self.log(f"回到起點，休息 {rest_seconds} 秒")
+            for remaining in range(rest_seconds, 0, -1):
+                if self._stopped():
+                    return
+                if self.set_state_cb:
+                    self.set_state_cb(f"休息中（{remaining}s）")
+                time.sleep(1)
+
+            if self._stopped():
+                return
+            self.state = self.RUNNING
+
+    def _run_step(self, index, step):
+        step_type = step["type"]
+        total = len(self._route)
+        if step_type == "move":
+            direction, duration = step["direction"], step["duration"]
+            direction_label = direction if isinstance(direction, str) else "+".join(direction)
+            self.log(f"[{index+1}/{total}] 固定移動：{direction_label} {duration}s")
+            _hold_point(direction, duration)
+            time.sleep(0.1)
+        elif step_type == "collect":
+            action = step["action"]
+            point = config.COLLECT_POINTS[action]
+            times = step.get("times", 5)
+            interval = step.get("interval", 0.4)
+            self.log(f"[{index+1}/{total}] 固定採集：{action} × {times}")
+            for _ in range(times):
+                if self._stopped():
+                    return
+                pyautogui.click(*point)
+                time.sleep(interval)
+        elif step_type == "go_home":
+            self.log(f"[{index+1}/{total}] 依偏移量回到原點")
+            go_home(self._stopped, self.log)
+            reset_position()   # we should be back at "home" now — treat this as the new zero
+        else:
+            raise ValueError(f"FIXED_ROUTE 步驟 {index} 的 type 不是 move/collect/go_home：{step_type!r}")

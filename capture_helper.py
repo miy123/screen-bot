@@ -21,6 +21,7 @@ Saves two files per capture, named after what you're currently capturing:
   images/<name>_<N>_mask.png  mask (white = recognized area, black = ignored background)
 """
 
+import ctypes
 import os
 import re
 import json
@@ -76,8 +77,24 @@ def _update_home_landmark_meta(offset):
         json.dump({"images": imgs, "offset": list(offset)}, f, ensure_ascii=False, indent=2)
 
 
+def _focus_console_window():
+    """
+    Bring the terminal window to the foreground. choose_category() blocks on
+    console input(), but pressing M happens while the cv2 image window has
+    focus — without this, the terminal prompt silently waits off-screen
+    behind the image window and pressing M looks like it did nothing.
+    """
+    try:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
 def choose_category():
     global current_name, next_index
+    _focus_console_window()
     print("\n要截哪個素材／面向？")
     for i, name in enumerate(CATEGORIES, 1):
         print(f"  {i}. {name}")
@@ -85,10 +102,27 @@ def choose_category():
         raw = input("輸入編號：").strip()
         if raw.isdigit() and 1 <= int(raw) <= len(CATEGORIES):
             current_name = CATEGORIES[int(raw) - 1]
-            next_index = _next_index_for(current_name)
-            print(f"目前截取：{current_name}（下一張會存成 {current_name}_{next_index}.png）")
-            return
+            break
         print("輸入無效，請重新輸入編號")
+
+    existing_next = _next_index_for(current_name)
+    if existing_next == 1:
+        next_index = 1
+    else:
+        print(f"\n「{current_name}」已經有截過圖（目前到 #{existing_next - 1}）：")
+        print("  1. 直接覆蓋原本所選的素材圖片（從 #1 重新開始編號）")
+        print("  2. 接著原本所選的素材圖片往後編號（預設）")
+        while True:
+            choice = input("輸入編號（直接按 Enter 預設選 2）：").strip()
+            if choice in ("", "2"):
+                next_index = existing_next
+                break
+            if choice == "1":
+                next_index = 1
+                break
+            print("輸入無效，請重新輸入編號")
+
+    print(f"目前截取：{current_name}（下一張會存成 {current_name}_{next_index}.png）")
 
 
 def window_title():

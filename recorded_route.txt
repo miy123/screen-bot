@@ -1,0 +1,17 @@
+# 右 (RIGHT)
+FIXED_ROUTE_RIGHT_RECORDED = [
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+    {"type": "collect", "action": "lumber", "times": 1, "interval": 0.4},
+]
+
+FIXED_ROUTE = FIXED_ROUTE_RIGHT_RECORDED

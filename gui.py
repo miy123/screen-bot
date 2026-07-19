@@ -5,14 +5,22 @@ Small GUI control panel (tkinter, always on top)
 import threading
 import time
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import scrolledtext, ttk
 import keyboard
 import pyautogui
 
 import config
-from engine import BotEngine, _resolve
+from engine import BotEngine, FixedRouteEngine, _resolve
 
 LOG_FILE = _resolve("bot_log.txt")
+
+# Mode name (shown in the GUI dropdown) -> engine class. Both engines expose
+# the same start()/stop()/state interface, so start_bot/stop_bot below don't
+# need to know which one is currently selected.
+MODES = {
+    "影像辨識": BotEngine,
+    "固定路線": FixedRouteEngine,
+}
 
 class BotGUI:
     def __init__(self):
@@ -42,6 +50,15 @@ class BotGUI:
         tk.Label(status_frame, text="狀態：").pack(side="left")
         tk.Label(status_frame, textvariable=self.status_var,
                  fg="#2196F3", font=("Arial", 10, "bold")).pack(side="left")
+
+        # Mode selector — switches which engine start_bot()/stop_bot() (and F1/F2) drive
+        mode_frame = tk.Frame(self.root)
+        mode_frame.pack(fill="x", **PAD)
+        tk.Label(mode_frame, text="模式：").pack(side="left")
+        self.mode_var = tk.StringVar(value="固定路線")
+        self.mode_combo = ttk.Combobox(mode_frame, textvariable=self.mode_var,
+                                        values=list(MODES.keys()), state="readonly", width=12)
+        self.mode_combo.pack(side="left")
 
         # Buttons
         btn_frame = tk.Frame(self.root)
@@ -92,23 +109,34 @@ class BotGUI:
         self.root.after(0, lambda: self.status_var.set(state_str))
 
     # ── Bot control ──────────────────────────────────────
-    def start_bot(self):
+    def _start_engine(self, engine):
         if self._thread and self._thread.is_alive():
             return
 
         self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
+        self.mode_combo.config(state="disabled")
 
-        self._engine = BotEngine(log_fn=self.log, state_fn=self.set_state)
-
+        self._engine = engine
         self._thread = threading.Thread(target=self._engine.start, daemon=True)
         self._thread.start()
+
+    def start_bot(self):
+        engine_cls = MODES[self.mode_var.get()]
+        self._start_engine(engine_cls(log_fn=self.log, state_fn=self.set_state))
+
+    def start_test_piece(self, label, route):
+        """Fixed-route mode only: run a single piece (config.FIXED_ROUTE_TOP/RIGHT/LEFT/BOTTOM)
+        on its own, regardless of which mode is currently selected in the dropdown."""
+        self.log(f"單獨測試「{label}」路線")
+        self._start_engine(FixedRouteEngine(log_fn=self.log, state_fn=self.set_state, route=route))
 
     def stop_bot(self):
         if self._engine:
             self._engine.stop()
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
+        self.mode_combo.config(state="readonly")
 
     # ── Debug: read a screen coordinate under the mouse ────
     def debug_position(self):
@@ -130,10 +158,23 @@ class BotGUI:
         keyboard.add_hotkey(config.HOTKEY_STOP,  lambda: self.root.after(0, self.stop_bot))
         keyboard.add_hotkey(config.HOTKEY_DEBUG, lambda: self.root.after(0, self.debug_position))
 
+        # Fixed-route mode: test one piece on its own, independent of the mode dropdown
+        keyboard.add_hotkey(config.HOTKEY_TEST_TOP,
+                             lambda: self.root.after(0, lambda: self.start_test_piece("上", config.FIXED_ROUTE_TOP)))
+        keyboard.add_hotkey(config.HOTKEY_TEST_RIGHT,
+                             lambda: self.root.after(0, lambda: self.start_test_piece("右", config.FIXED_ROUTE_RIGHT)))
+        keyboard.add_hotkey(config.HOTKEY_TEST_LEFT,
+                             lambda: self.root.after(0, lambda: self.start_test_piece("左", config.FIXED_ROUTE_LEFT)))
+        keyboard.add_hotkey(config.HOTKEY_TEST_BOTTOM,
+                             lambda: self.root.after(0, lambda: self.start_test_piece("下", config.FIXED_ROUTE_BOTTOM)))
+
     # ── Run ──────────────────────────────────────────────
     def run(self):
         pyautogui.FAILSAFE = True
         self.log(f"就緒。{config.HOTKEY_START.upper()} 啟動 / {config.HOTKEY_STOP.upper()} 停止 / {config.HOTKEY_DEBUG.upper()} 讀取滑鼠座標")
+        self.log(f"固定路線單塊測試：{config.HOTKEY_TEST_TOP.upper()}=上 "
+                  f"{config.HOTKEY_TEST_RIGHT.upper()}=右 {config.HOTKEY_TEST_LEFT.upper()}=左 "
+                  f"{config.HOTKEY_TEST_BOTTOM.upper()}=下（{config.HOTKEY_STOP.upper()} 停止）")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.mainloop()
 

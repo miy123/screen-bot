@@ -14,7 +14,7 @@ if errorlevel 1 (echo 安裝失敗，請確認 Python 和 pip 已安裝 & pause 
 
 :: 打包 exe（onedir 模式：啟動快、易除錯）
 echo [2/3] 打包 exe...
-pyinstaller --noconfirm --onedir --noconsole ^
+pyinstaller --noconfirm --onedir --noconsole --uac-admin ^
     --name %NAME% ^
     --add-data "images;images" ^
     bot.py
