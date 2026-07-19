@@ -397,9 +397,7 @@ def _move_toward(find_target_fn, reach_radius, stop_fn, log_fn, arrived_msg, los
     try:
         while not stop_fn():
             screen = capture_screen()
-            log_fn("capture_screen");
             pos = find_target_fn(screen)
-            log_fn("find_target_fn");
             if pos is None:
                 # Tolerate a couple of consecutive misses (occlusion by the character's
                 # own sprite at close range, a stray animation frame) before giving up —
@@ -636,22 +634,29 @@ def _go_home_by_estimate(stop_fn, log_fn):
 
 def go_home(stop_fn, log_fn):
     """
-    Return to "home" to idle. If images/home_landmark.json exists (written by
-    capture_helper.py's "home_landmark" category), navigates by tracking that
-    landmark's on-screen position (accurate, doesn't drift); otherwise (or if
-    the landmark can't currently be found) falls back to the accumulated
-    button-hold-seconds estimate.
+    Return to "home" to idle, in two passes:
+    1. Always run the accumulated button-hold-seconds estimate first (fast,
+       but only ever approximate — holding for the "same" duration doesn't
+       reliably cover the same distance every time, since the game's own
+       input response timing isn't perfectly consistent either).
+    2. If images/home_landmark.json exists (written by capture_helper.py's
+       "home_landmark" category), follow up with a correction pass that
+       tracks the landmark's actual on-screen position — this acts as a
+       visual floor that fixes up whatever the timing-based estimate got
+       wrong, since it reacts to what's really on screen instead of a
+       duration guess. Skipped (silently, leaving the estimate's result as
+       final) if the landmark isn't visible or wasn't captured.
     """
+    _go_home_by_estimate(stop_fn, log_fn)
+    if stop_fn():
+        return
+
     images, offset = _load_home_landmark()
     if images:
-        log_fn("回中心待機（地標導航）")
-        arrived = _move_toward(lambda screen: _landmark_virtual_target(screen, images, offset),
-                                config.HOME_REACH_RADIUS, stop_fn, log_fn,
-                                "已回到中心（距離 {dist:.0f}px）", "地標消失，改用估計位置回中心")
-        if arrived or stop_fn():
-            return
-
-    _go_home_by_estimate(stop_fn, log_fn)
+        log_fn("回中心待機：截圖地標校正")
+        _move_toward(lambda screen: _landmark_virtual_target(screen, images, offset),
+                     config.HOME_REACH_RADIUS, stop_fn, log_fn,
+                     "已對準中心（距離 {dist:.0f}px）", "地標目前不在畫面上，維持估計位置")
 
 def search_wander(stop_fn, log_fn=print):
     log_fn("搜尋中：遊走一圈")
